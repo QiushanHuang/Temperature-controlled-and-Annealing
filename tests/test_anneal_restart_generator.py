@@ -420,6 +420,47 @@ class AnnealRestartGeneratorTests(unittest.TestCase):
                 "OMP_NUM_THREADS=2 mpiexec -np 4 /path/to/lmp -sf omp -pk omp 2",
             )
 
+    def test_create_suite_cli_accepts_quoted_lammps_args(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "inputs"
+            tdir = root / "L3" / "Tstar_1.04"
+            tdir.mkdir(parents=True)
+            (tdir / "Restart.cooldown.76000000").write_bytes(b"restart")
+            suite_dir = Path(td) / "suite"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(suite.__file__).resolve()),
+                    "--root",
+                    str(root),
+                    "--suite-dir",
+                    str(suite_dir),
+                    "--lengths",
+                    "L3",
+                    "--loops",
+                    "7",
+                    "--seeds",
+                    "101",
+                    "102",
+                    "103",
+                    "104",
+                    "105",
+                    "106",
+                    "107",
+                    "--lammps-args",
+                    "-sf omp -pk omp 2",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads((suite_dir / "manifest.json").read_text(encoding="utf-8"))
+            data = json.loads(Path(manifest["cases"][0]["params_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(data["run"]["lammps_args"], ["-sf", "omp", "-pk", "omp", "2"])
+
     def test_run_anneal_accepts_multiple_param_files_sequentially(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

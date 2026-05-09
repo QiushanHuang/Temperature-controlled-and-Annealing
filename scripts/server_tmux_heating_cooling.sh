@@ -60,7 +60,6 @@ if [[ ! -x "$LAMMPS_BIN" ]]; then
   exit 2
 fi
 
-read -r -a LAMMPS_ARG_ARRAY <<< "$LAMMPS_ARGS"
 LAMMPS_HELP="$("$LAMMPS_BIN" -h 2>&1 || true)"
 REQUIRED_PACKAGES=(MOLECULE ASPHERE RIGID)
 if (( OMP_THREADS > 1 )) || [[ " $LAMMPS_ARGS " == *" omp "* ]]; then
@@ -99,8 +98,8 @@ CREATE_ARGS=(
   --mpiexec "$MPIEXEC"
   --lammps-bin "$LAMMPS_BIN"
 )
-if (( ${#LAMMPS_ARG_ARRAY[@]} > 0 )); then
-  CREATE_ARGS+=(--lammps-args "${LAMMPS_ARG_ARRAY[@]}")
+if [[ -n "$LAMMPS_ARGS" ]]; then
+  CREATE_ARGS+=(--lammps-args "$LAMMPS_ARGS")
 fi
 
 if [[ -n "$OUTPUT_ROOT" ]]; then

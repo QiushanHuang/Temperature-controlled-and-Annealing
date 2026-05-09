@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import stat
 import sys
 from dataclasses import dataclass
@@ -30,7 +31,6 @@ DEFAULT_MPI_RANKS = 4
 DEFAULT_OMP_THREADS = 2
 DEFAULT_MPIEXEC = "mpiexec"
 DEFAULT_LAMMPS_BIN = "/home/star/Research/software/lammps-22Jul2025/build/lmp"
-DEFAULT_LAMMPS_ARGS = ("-sf", "omp", "-pk", "omp", str(DEFAULT_OMP_THREADS))
 
 
 @dataclass(frozen=True)
@@ -89,6 +89,14 @@ def _absolute_no_resolve(path: str | Path) -> Path:
     if not expanded.is_absolute():
         expanded = Path.cwd() / expanded
     return Path(os.path.abspath(os.fspath(expanded)))
+
+
+def _normalize_lammps_args(raw_args: str | Sequence[str] | None, omp_threads: int) -> tuple[str, ...]:
+    if raw_args is None:
+        return ("-sf", "omp", "-pk", "omp", str(omp_threads)) if omp_threads > 1 else ()
+    if isinstance(raw_args, str):
+        return tuple(shlex.split(raw_args))
+    return tuple(str(arg) for arg in raw_args)
 
 
 def _params_payload(
@@ -182,7 +190,7 @@ def create_suite(
     omp_threads: int = DEFAULT_OMP_THREADS,
     mpiexec: str = DEFAULT_MPIEXEC,
     lammps_bin: str = DEFAULT_LAMMPS_BIN,
-    lammps_args: Sequence[str] | None = None,
+    lammps_args: str | Sequence[str] | None = None,
     overwrite: bool = False,
 ) -> Path:
     root = Path(root).expanduser().resolve()
@@ -207,10 +215,7 @@ def create_suite(
         raise ValueError("loops must be positive")
     if len(seeds) != loops:
         raise ValueError("number of seeds must equal loops")
-    if lammps_args is None:
-        lammps_args = ("-sf", "omp", "-pk", "omp", str(omp_threads)) if omp_threads > 1 else ()
-    else:
-        lammps_args = tuple(str(arg) for arg in lammps_args)
+    lammps_args = _normalize_lammps_args(lammps_args, omp_threads)
 
     params_dir = suite_path / "params"
     params_dir.mkdir(parents=True, exist_ok=True)
@@ -319,9 +324,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--lammps-bin", default=DEFAULT_LAMMPS_BIN, help="LAMMPS executable.")
     parser.add_argument(
         "--lammps-args",
-        nargs="*",
         default=None,
-        help="Extra LAMMPS command-line arguments. Default: '-sf omp -pk omp <omp_threads>' when omp_threads > 1.",
+        help="Extra LAMMPS command-line arguments as one quoted string. Default: '-sf omp -pk omp <omp_threads>' when omp_threads > 1.",
     )
     parser.add_argument("--overwrite", action="store_true", help="Set output.overwrite=true in generated params.")
     return parser.parse_args(argv)
