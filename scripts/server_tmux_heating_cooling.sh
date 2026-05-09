@@ -10,6 +10,13 @@ MPI_RANKS="${MPI_RANKS:-4}"
 OMP_THREADS="${OMP_THREADS:-2}"
 MPIEXEC="${MPIEXEC:-mpiexec}"
 LAMMPS_BIN="${LAMMPS_BIN:-/home/star/Research/software/lammps-22Jul2025/build/lmp}"
+if [[ -z "${LAMMPS_ARGS+x}" ]]; then
+  if (( OMP_THREADS > 1 )); then
+    LAMMPS_ARGS="-sf omp -pk omp $OMP_THREADS"
+  else
+    LAMMPS_ARGS=""
+  fi
+fi
 
 CPU_TOTAL="${CPU_TOTAL:-256}"
 DRY_RUN_ONLY="${DRY_RUN_ONLY:-0}"
@@ -53,16 +60,21 @@ if [[ ! -x "$LAMMPS_BIN" ]]; then
   exit 2
 fi
 
+read -r -a LAMMPS_ARG_ARRAY <<< "$LAMMPS_ARGS"
 LAMMPS_HELP="$("$LAMMPS_BIN" -h 2>&1 || true)"
+REQUIRED_PACKAGES=(MOLECULE ASPHERE RIGID)
+if (( OMP_THREADS > 1 )) || [[ " $LAMMPS_ARGS " == *" omp "* ]]; then
+  REQUIRED_PACKAGES+=(OPENMP)
+fi
 MISSING_PACKAGES=()
-for package in MOLECULE ASPHERE RIGID; do
+for package in "${REQUIRED_PACKAGES[@]}"; do
   if ! grep -Eq "(^|[[:space:]])${package}($|[[:space:]])" <<< "$LAMMPS_HELP"; then
     MISSING_PACKAGES+=("$package")
   fi
 done
 if (( ${#MISSING_PACKAGES[@]} > 0 )); then
   echo "LAMMPS binary is missing required package(s): ${MISSING_PACKAGES[*]}" >&2
-  echo "This restart/input needs MOLECULE for atom_style bond, ASPHERE for ellipsoids/Gay-Berne, and RIGID for rigid/nvt/small." >&2
+  echo "This restart/input needs MOLECULE for atom_style bond, ASPHERE for ellipsoids/Gay-Berne, RIGID for rigid/nvt/small, and OPENMP for -sf omp/-pk omp." >&2
   echo "Use or rebuild a LAMMPS binary with these packages enabled, then set LAMMPS_BIN to that executable." >&2
   exit 2
 fi
@@ -87,6 +99,9 @@ CREATE_ARGS=(
   --mpiexec "$MPIEXEC"
   --lammps-bin "$LAMMPS_BIN"
 )
+if (( ${#LAMMPS_ARG_ARRAY[@]} > 0 )); then
+  CREATE_ARGS+=(--lammps-args "${LAMMPS_ARG_ARRAY[@]}")
+fi
 
 if [[ -n "$OUTPUT_ROOT" ]]; then
   CREATE_ARGS+=(--output-root "$OUTPUT_ROOT")
@@ -109,7 +124,7 @@ echo "Seeds        : ${SEED_ARGS[*]}"
 echo "Loops/case   : $LOOPS"
 echo "Hot T        : $HOT_T"
 echo "Per case     : np=${MPI_RANKS}, omp=${OMP_THREADS}, CPUs=$(( MPI_RANKS * OMP_THREADS ))"
-echo "MPI command  : ${MPIEXEC} -np ${MPI_RANKS} ${LAMMPS_BIN}"
+echo "MPI command  : ${MPIEXEC} -np ${MPI_RANKS} ${LAMMPS_BIN} ${LAMMPS_ARGS}"
 
 PYTHONPATH="$CODE_ROOT:${PYTHONPATH:-}" python3 "$CODE_ROOT/scripts/create_heating_cooling_suite.py" "${CREATE_ARGS[@]}"
 
@@ -179,7 +194,7 @@ echo "[CASE] $case_id" > $(printf '%q' "$tmux_log")
 echo "[RUN_ROOT] $RUN_ROOT" >> $(printf '%q' "$tmux_log")
 echo "[RESULT] $result_dir" >> $(printf '%q' "$tmux_log")
 echo "[PARAMS] $params_path" >> $(printf '%q' "$tmux_log")
-echo "[COMMAND] OMP_NUM_THREADS=$OMP_THREADS $MPIEXEC -np $MPI_RANKS $LAMMPS_BIN" >> $(printf '%q' "$tmux_log")
+echo "[COMMAND] OMP_NUM_THREADS=$OMP_THREADS $MPIEXEC -np $MPI_RANKS $LAMMPS_BIN $LAMMPS_ARGS" >> $(printf '%q' "$tmux_log")
 set +e
 python3 $(printf '%q' "$CODE_ROOT/run_anneal.py") $(printf '%q' "$params_path") >> $(printf '%q' "$tmux_log") 2>&1
 rc=\$?

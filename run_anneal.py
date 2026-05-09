@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -242,7 +243,18 @@ def _build_lammps_command(run: dict[str, Any]) -> str:
     if mpi_ranks != 1:
         parts.extend([str(run.get("mpiexec", "mpiexec")), "-np", str(mpi_ranks)])
     parts.append(lammps_bin)
+    parts.extend(_lammps_args(run.get("lammps_args", [])))
     return " ".join(parts)
+
+
+def _lammps_args(raw_args: Any) -> list[str]:
+    if raw_args in (None, ""):
+        return []
+    if isinstance(raw_args, str):
+        return shlex.split(raw_args)
+    if isinstance(raw_args, list):
+        return [str(arg) for arg in raw_args]
+    raise ValueError("run.lammps_args must be a string or a JSON list")
 
 
 def _default_params_path() -> Path:

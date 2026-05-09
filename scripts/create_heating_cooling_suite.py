@@ -30,6 +30,7 @@ DEFAULT_MPI_RANKS = 4
 DEFAULT_OMP_THREADS = 2
 DEFAULT_MPIEXEC = "mpiexec"
 DEFAULT_LAMMPS_BIN = "/home/star/Research/software/lammps-22Jul2025/build/lmp"
+DEFAULT_LAMMPS_ARGS = ("-sf", "omp", "-pk", "omp", str(DEFAULT_OMP_THREADS))
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,7 @@ def _params_payload(
     omp_threads: int,
     mpiexec: str,
     lammps_bin: str,
+    lammps_args: Sequence[str],
     overwrite: bool,
 ) -> dict[str, object]:
     return {
@@ -139,6 +141,7 @@ def _params_payload(
             "omp_threads": int(omp_threads),
             "mpiexec": str(mpiexec),
             "lammps_bin": str(lammps_bin),
+            "lammps_args": [str(arg) for arg in lammps_args],
             "result_dir": str(case.result_dir),
         },
     }
@@ -179,6 +182,7 @@ def create_suite(
     omp_threads: int = DEFAULT_OMP_THREADS,
     mpiexec: str = DEFAULT_MPIEXEC,
     lammps_bin: str = DEFAULT_LAMMPS_BIN,
+    lammps_args: Sequence[str] | None = None,
     overwrite: bool = False,
 ) -> Path:
     root = Path(root).expanduser().resolve()
@@ -203,6 +207,10 @@ def create_suite(
         raise ValueError("loops must be positive")
     if len(seeds) != loops:
         raise ValueError("number of seeds must equal loops")
+    if lammps_args is None:
+        lammps_args = ("-sf", "omp", "-pk", "omp", str(omp_threads)) if omp_threads > 1 else ()
+    else:
+        lammps_args = tuple(str(arg) for arg in lammps_args)
 
     params_dir = suite_path / "params"
     params_dir.mkdir(parents=True, exist_ok=True)
@@ -242,6 +250,7 @@ def create_suite(
                 omp_threads=omp_threads,
                 mpiexec=mpiexec,
                 lammps_bin=lammps_bin,
+                lammps_args=lammps_args,
                 overwrite=overwrite,
             )
             case.params_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -271,6 +280,7 @@ def create_suite(
             "omp_threads": int(omp_threads),
             "mpiexec": str(mpiexec),
             "lammps_bin": str(lammps_bin),
+            "lammps_args": [str(arg) for arg in lammps_args],
         },
         "run_all_script": str(run_all_script.resolve()),
         "cases": [
@@ -307,6 +317,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--omp-threads", type=int, default=DEFAULT_OMP_THREADS, help="OMP threads per MPI rank.")
     parser.add_argument("--mpiexec", default=DEFAULT_MPIEXEC, help="MPI launcher.")
     parser.add_argument("--lammps-bin", default=DEFAULT_LAMMPS_BIN, help="LAMMPS executable.")
+    parser.add_argument(
+        "--lammps-args",
+        nargs="*",
+        default=None,
+        help="Extra LAMMPS command-line arguments. Default: '-sf omp -pk omp <omp_threads>' when omp_threads > 1.",
+    )
     parser.add_argument("--overwrite", action="store_true", help="Set output.overwrite=true in generated params.")
     return parser.parse_args(argv)
 
@@ -326,6 +342,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         omp_threads=args.omp_threads,
         mpiexec=args.mpiexec,
         lammps_bin=args.lammps_bin,
+        lammps_args=args.lammps_args,
         overwrite=args.overwrite,
     )
     data = json.loads(manifest.read_text(encoding="utf-8"))

@@ -132,12 +132,13 @@ MPI_RANKS=4
 OMP_THREADS=2
 MPIEXEC=mpiexec
 LAMMPS_BIN=/home/star/Research/software/lammps-22Jul2025/build/lmp
+LAMMPS_ARGS="-sf omp -pk omp 2"
 CPU_TOTAL=512
 LENGTHS="L3 L7"
 SEEDS="111111 222222 333333 444444 555555 666666 777777"
 ```
 
-The LAMMPS binary must include at least `MOLECULE`, `ASPHERE`, and `RIGID`. The tmux launcher checks this before launching cases.
+The LAMMPS binary must include at least `MOLECULE`, `ASPHERE`, `RIGID`, and `OPENMP`. The tmux launcher checks this before launching cases. `OMP_NUM_THREADS=2` only sets the thread count; `LAMMPS_ARGS="-sf omp -pk omp 2"` enables the OpenMP accelerated `/omp` styles where LAMMPS provides them.
 
 ## CPU Settings
 
@@ -150,6 +151,7 @@ The `run` section controls LAMMPS execution:
   "omp_threads": 2,
   "mpiexec": "mpiexec",
   "lammps_bin": "/home/star/Research/software/lammps-22Jul2025/build/lmp",
+  "lammps_args": ["-sf", "omp", "-pk", "omp", "2"],
   "result_dir": "anneal_hot1.70_np4omp2_loops7"
 }
 ```
@@ -157,5 +159,26 @@ The `run` section controls LAMMPS execution:
 This generates:
 
 ```bash
-OMP_NUM_THREADS=2 mpiexec -np 4 /home/star/Research/software/lammps-22Jul2025/build/lmp -in in.loop.lmp
+OMP_NUM_THREADS=2 mpiexec -np 4 /home/star/Research/software/lammps-22Jul2025/build/lmp -sf omp -pk omp 2 -in in.loop.lmp
+```
+
+If your LAMMPS binary is missing `OPENMP`, rebuild it with the required packages:
+
+```bash
+cd /home/star/Research/software/lammps-22Jul2025
+cmake -S cmake -B build-omp \
+  -D CMAKE_BUILD_TYPE=Release \
+  -D BUILD_MPI=ON \
+  -D BUILD_OMP=ON \
+  -D PKG_MOLECULE=ON \
+  -D PKG_ASPHERE=ON \
+  -D PKG_RIGID=ON \
+  -D PKG_OPENMP=ON
+cmake --build build-omp -j 32
+```
+
+Then launch with:
+
+```bash
+LAMMPS_BIN=/home/star/Research/software/lammps-22Jul2025/build-omp/lmp
 ```

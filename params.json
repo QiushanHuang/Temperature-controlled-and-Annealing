@@ -34,6 +34,7 @@
     "omp_threads": 2,
     "mpiexec": "mpiexec",
     "lammps_bin": "/home/star/Research/software/lammps-22Jul2025/build/lmp",
+    "lammps_args": ["-sf", "omp", "-pk", "omp", "2"],
     "result_dir": "anneal_hot1.70_np4omp2_loops7"
   }
 }

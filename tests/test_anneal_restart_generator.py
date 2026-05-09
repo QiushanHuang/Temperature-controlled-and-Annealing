@@ -383,6 +383,43 @@ class AnnealRestartGeneratorTests(unittest.TestCase):
             self.assertIn("OMP_NUM_THREADS=2 mpiexec -np 4 lmp_mpi", run_script)
             self.assertFalse(run_cfg.run_lammps)
 
+    def test_lammps_args_are_appended_after_executable(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            restart = root / "Restart.input"
+            restart.write_bytes(b"restart")
+            params = root / "params.json"
+            params.write_text(
+                json.dumps(
+                    {
+                        "input": {"restart_file": "Restart.input"},
+                        "output": {"output_root": "anneal_inputs"},
+                        "simulation": {
+                            "target_T": 1.40,
+                            "hot_T": 1.42,
+                            "loops": 1,
+                            "seeds": [123456],
+                        },
+                        "run": {
+                            "run_lammps": False,
+                            "mpi_ranks": 4,
+                            "omp_threads": 2,
+                            "mpiexec": "mpiexec",
+                            "lammps_bin": "/path/to/lmp",
+                            "lammps_args": ["-sf", "omp", "-pk", "omp", "2"],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            cfg, _ = run_anneal.load_project_config(params)
+
+            self.assertEqual(
+                cfg.lammps_command,
+                "OMP_NUM_THREADS=2 mpiexec -np 4 /path/to/lmp -sf omp -pk omp 2",
+            )
+
     def test_run_anneal_accepts_multiple_param_files_sequentially(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -535,6 +572,7 @@ class AnnealRestartGeneratorTests(unittest.TestCase):
             self.assertEqual(data["run"]["mpi_ranks"], 4)
             self.assertEqual(data["run"]["omp_threads"], 2)
             self.assertEqual(data["run"]["lammps_bin"], "/home/star/Research/software/lammps-22Jul2025/build/lmp")
+            self.assertEqual(data["run"]["lammps_args"], ["-sf", "omp", "-pk", "omp", "2"])
             self.assertTrue(data["run"]["result_dir"].endswith("np4omp2_loops7"))
 
     def test_heating_cooling_suite_can_place_outputs_under_separate_root(self):
