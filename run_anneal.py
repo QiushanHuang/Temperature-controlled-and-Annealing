@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -49,10 +50,19 @@ def _read_json(path: Path) -> dict[str, Any]:
     return data
 
 
-def _resolve_project_path(project_root: Path, value: str | Path) -> Path:
+def _absolute_no_resolve(path: str | Path) -> Path:
+    expanded = Path(path).expanduser()
+    if not expanded.is_absolute():
+        expanded = Path.cwd() / expanded
+    return Path(os.path.abspath(os.fspath(expanded)))
+
+
+def _resolve_project_path(project_root: Path, value: str | Path, *, resolve_symlinks: bool = True) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute():
         path = project_root / path
+    if not resolve_symlinks:
+        return _absolute_no_resolve(path)
     return path.resolve()
 
 
@@ -146,7 +156,7 @@ def load_project_config(params_path: str | Path = DEFAULT_PARAMS) -> tuple[Gener
 
     result_dir = run.get("result_dir")
     output_setting = result_dir if result_dir else output_cfg.get("output_root", "anneal_output")
-    output_root = _resolve_project_path(project_root, str(output_setting))
+    output_root = _resolve_project_path(project_root, str(output_setting), resolve_symlinks=False)
 
     loops = int(simulation["loops"])
     explicit_seeds = simulation.get("seeds")

@@ -609,6 +609,9 @@ class AnnealRestartGeneratorTests(unittest.TestCase):
             self.assertEqual(manifest["output_root"], str(output_root.absolute()))
             self.assertIn("/MyPassport2/", case["result_dir"])
             self.assertNotIn("My Passport2", case["result_dir"])
+            cfg, _ = run_anneal.load_project_config(case["params_path"])
+            self.assertIn("/MyPassport2/", str(cfg.output_root))
+            self.assertNotIn("My Passport2", str(cfg.output_root))
 
     def test_run_anneal_launches_fake_lammps_for_multiple_loops(self):
         with tempfile.TemporaryDirectory() as td:
