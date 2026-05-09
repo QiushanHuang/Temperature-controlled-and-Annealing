@@ -1,0 +1,39 @@
+{
+  "workspace": "cwd",
+  "input": {
+    "restart_file": "auto",
+    "restart_glob": "Restart*",
+    "head_id": "auto",
+    "tail_id": "auto"
+  },
+  "output": {
+    "output_root": "anneal_hot1.70_np4omp2_loops7",
+    "overwrite": false
+  },
+  "simulation": {
+    "target_T": 1.40,
+    "hot_T": 1.70,
+    "loops": 7,
+    "seeds": [111111, 222222, 333333, 444444, 555555, 666666, 777777],
+    "timestep": 0.001,
+    "Tdamp": 0.1,
+    "Tchain": 3,
+    "cool_dT": 0.1,
+    "cool_dumps_per_dT": 100,
+    "cool_back_steps": null,
+    "hot_hold_dumps": 100,
+    "target_hold_dumps": 200,
+    "sample_dumps": 4000,
+    "sample_every": 1000,
+    "dump_every": 1000,
+    "restart_interval_dump_frames": 500
+  },
+  "run": {
+    "run_lammps": false,
+    "mpi_ranks": 4,
+    "omp_threads": 2,
+    "mpiexec": "mpiexec",
+    "lammps_bin": "/home/star/Research/software/lammps-22Jul2025/build/lmp",
+    "result_dir": "anneal_hot1.70_np4omp2_loops7"
+  }
+}

@@ -1,0 +1,26 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Local virtual environments and editor state
+.venv/
+.env
+.idea/
+.vscode/
+
+# Generated LAMMPS / annealing outputs
+Restart*
+*.dump
+*.lammps
+*.log
+runner.log
+log.*
+loop_state.dat
+anneal_hot*/
+anneal_*_suite/
+loop*_*/
+
+# Large simulation artifacts
+*.bin
+*.data
+*.lammpstrj
