@@ -557,10 +557,10 @@ class AnnealRestartGeneratorTests(unittest.TestCase):
 
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             case = manifest["cases"][0]
-            self.assertEqual(manifest["output_root"], str(output_root.resolve()))
+            self.assertEqual(manifest["output_root"], str(output_root.absolute()))
             self.assertEqual(
                 Path(case["result_dir"]),
-                output_root.resolve() / "L3" / "Tstar_1.04" / "anneal_hot1.70_np4omp2_loops7",
+                output_root.absolute() / "L3" / "Tstar_1.04" / "anneal_hot1.70_np4omp2_loops7",
             )
             data = json.loads(Path(case["params_path"]).read_text(encoding="utf-8"))
             self.assertEqual(data["workspace"], str(tdir.resolve()))
@@ -582,6 +582,33 @@ class AnnealRestartGeneratorTests(unittest.TestCase):
                     loops=7,
                     seeds=(101, 102, 103, 104, 105, 106, 107),
                 )
+
+    def test_heating_cooling_suite_preserves_no_space_output_symlink(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "inputs"
+            tdir = root / "L3" / "Tstar_1.04"
+            tdir.mkdir(parents=True)
+            (tdir / "Restart.cooldown.76000000").write_bytes(b"restart")
+            real_disk = Path(td) / "My Passport2"
+            real_disk.mkdir()
+            symlink_disk = Path(td) / "MyPassport2"
+            symlink_disk.symlink_to(real_disk, target_is_directory=True)
+            output_root = symlink_disk / "cooling-loop-output"
+
+            manifest_path = suite.create_suite(
+                root=root,
+                suite_dir=Path(td) / "anneal_suite",
+                output_root=output_root,
+                lengths=("L3",),
+                loops=7,
+                seeds=(101, 102, 103, 104, 105, 106, 107),
+            )
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            case = manifest["cases"][0]
+            self.assertEqual(manifest["output_root"], str(output_root.absolute()))
+            self.assertIn("/MyPassport2/", case["result_dir"])
+            self.assertNotIn("My Passport2", case["result_dir"])
 
     def test_run_anneal_launches_fake_lammps_for_multiple_loops(self):
         with tempfile.TemporaryDirectory() as td:

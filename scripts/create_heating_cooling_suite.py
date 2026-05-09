@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import stat
 import sys
 from dataclasses import dataclass
@@ -80,6 +81,13 @@ def _hot_tag(hot_t: float) -> str:
 
 def _run_tag(mpi_ranks: int, omp_threads: int) -> str:
     return f"np{int(mpi_ranks)}omp{int(omp_threads)}"
+
+
+def _absolute_no_resolve(path: str | Path) -> Path:
+    expanded = Path(path).expanduser()
+    if not expanded.is_absolute():
+        expanded = Path.cwd() / expanded
+    return Path(os.path.abspath(os.fspath(expanded)))
 
 
 def _params_payload(
@@ -176,11 +184,11 @@ def create_suite(
     root = Path(root).expanduser().resolve()
     output_base = None
     if output_root is not None:
-        output_base = Path(output_root).expanduser().resolve()
+        output_base = _absolute_no_resolve(output_root)
         if any(ch.isspace() for ch in str(output_base)):
             raise ValueError(
                 f"output_root contains whitespace: {output_base}. "
-                "Use a no-space mount path or symlink such as /media/star/MyPassport2."
+                "Use a no-space mount path or symlink such as /home/star/MyPassport2."
             )
     if suite_dir is None:
         suite_path = root / f"anneal_hot{_hot_tag(hot_t)}_{_run_tag(mpi_ranks, omp_threads)}_loops{loops}_suite"
@@ -222,7 +230,7 @@ def create_suite(
                 workspace=tstar_dir.resolve(),
                 restart=_find_restart(tstar_dir),
                 params_path=(params_dir / f"{case_id}.json").resolve(),
-                result_dir=(result_base / result_dir_name).resolve(),
+                result_dir=_absolute_no_resolve(result_base / result_dir_name),
             )
             payload = _params_payload(
                 case=case,
