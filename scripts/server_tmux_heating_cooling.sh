@@ -3,6 +3,7 @@ set -euo pipefail
 
 CODE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ROOT="${RUN_ROOT:-/Volumes/TRACER/heating_cooling}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-}"
 SUITE_DIR="${SUITE_DIR:-anneal_hot1.70_np4omp2_loops7_suite}"
 
 MPI_RANKS="${MPI_RANKS:-4}"
@@ -40,6 +41,32 @@ if (( ${#SEED_ARGS[@]} != LOOPS )); then
   exit 2
 fi
 
+if [[ -n "$OUTPUT_ROOT" && "$OUTPUT_ROOT" =~ [[:space:]] ]]; then
+  echo "OUTPUT_ROOT contains whitespace: $OUTPUT_ROOT" >&2
+  echo "LAMMPS input paths are intentionally kept whitespace-free." >&2
+  echo "Create a no-space symlink, for example: ln -s '/media/star/My Passport2' /media/star/MyPassport2" >&2
+  exit 2
+fi
+
+if [[ ! -x "$LAMMPS_BIN" ]]; then
+  echo "LAMMPS_BIN is not executable: $LAMMPS_BIN" >&2
+  exit 2
+fi
+
+LAMMPS_HELP="$("$LAMMPS_BIN" -h 2>&1 || true)"
+MISSING_PACKAGES=()
+for package in MOLECULE ASPHERE RIGID; do
+  if ! grep -Eq "(^|[[:space:]])${package}($|[[:space:]])" <<< "$LAMMPS_HELP"; then
+    MISSING_PACKAGES+=("$package")
+  fi
+done
+if (( ${#MISSING_PACKAGES[@]} > 0 )); then
+  echo "LAMMPS binary is missing required package(s): ${MISSING_PACKAGES[*]}" >&2
+  echo "This restart/input needs MOLECULE for atom_style bond, ASPHERE for ellipsoids/Gay-Berne, and RIGID for rigid/nvt/small." >&2
+  echo "Use or rebuild a LAMMPS binary with these packages enabled, then set LAMMPS_BIN to that executable." >&2
+  exit 2
+fi
+
 SUITE_ABS="$RUN_ROOT/$SUITE_DIR"
 MANIFEST="$SUITE_ABS/manifest.json"
 TMUX_DIR="$SUITE_ABS/tmux"
@@ -61,6 +88,10 @@ CREATE_ARGS=(
   --lammps-bin "$LAMMPS_BIN"
 )
 
+if [[ -n "$OUTPUT_ROOT" ]]; then
+  CREATE_ARGS+=(--output-root "$OUTPUT_ROOT")
+fi
+
 if [[ "$DRY_RUN_ONLY" != "1" ]]; then
   CREATE_ARGS+=(--run-lammps)
 fi
@@ -71,6 +102,7 @@ fi
 
 echo "Code root    : $CODE_ROOT"
 echo "Run root     : $RUN_ROOT"
+echo "Output root  : ${OUTPUT_ROOT:-<inside each Tstar folder>}"
 echo "Suite        : $SUITE_ABS"
 echo "Lengths      : ${LENGTH_ARGS[*]}"
 echo "Seeds        : ${SEED_ARGS[*]}"
@@ -187,7 +219,11 @@ chmod +x "$CHECK_SCRIPT"
 echo
 echo "tmux sessions written to: $SESSION_LIST"
 echo "tmux logs are under     : $LOG_DIR"
-echo "case outputs are under  : each Tstar folder / anneal_hot${HOT_T}_np${MPI_RANKS}omp${OMP_THREADS}_loops${LOOPS}"
+if [[ -n "$OUTPUT_ROOT" ]]; then
+  echo "case outputs are under  : $OUTPUT_ROOT/<L3|L7>/Tstar_x.xx/anneal_hot${HOT_T}_np${MPI_RANKS}omp${OMP_THREADS}_loops${LOOPS}"
+else
+  echo "case outputs are under  : each Tstar folder / anneal_hot${HOT_T}_np${MPI_RANKS}omp${OMP_THREADS}_loops${LOOPS}"
+fi
 echo "Check status with       : $CHECK_SCRIPT"
 FIRST_SESSION="$(awk 'NR == 1 {print $1}' "$SESSION_LIST")"
 echo "Attach example          : tmux attach -t $FIRST_SESSION"

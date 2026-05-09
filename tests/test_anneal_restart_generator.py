@@ -537,6 +537,52 @@ class AnnealRestartGeneratorTests(unittest.TestCase):
             self.assertEqual(data["run"]["lammps_bin"], "/home/star/Research/software/lammps-22Jul2025/build/lmp")
             self.assertTrue(data["run"]["result_dir"].endswith("np4omp2_loops7"))
 
+    def test_heating_cooling_suite_can_place_outputs_under_separate_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "inputs"
+            output_root = Path(td) / "large_outputs"
+            tdir = root / "L3" / "Tstar_1.04"
+            tdir.mkdir(parents=True)
+            (tdir / "Restart.cooldown.76000000").write_bytes(b"restart")
+
+            manifest_path = suite.create_suite(
+                root=root,
+                suite_dir=Path(td) / "anneal_suite",
+                output_root=output_root,
+                lengths=("L3",),
+                loops=7,
+                seeds=(101, 102, 103, 104, 105, 106, 107),
+                hot_t=1.7,
+            )
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            case = manifest["cases"][0]
+            self.assertEqual(manifest["output_root"], str(output_root.resolve()))
+            self.assertEqual(
+                Path(case["result_dir"]),
+                output_root.resolve() / "L3" / "Tstar_1.04" / "anneal_hot1.70_np4omp2_loops7",
+            )
+            data = json.loads(Path(case["params_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(data["workspace"], str(tdir.resolve()))
+            self.assertEqual(data["run"]["result_dir"], case["result_dir"])
+
+    def test_heating_cooling_suite_rejects_output_root_with_whitespace(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "inputs"
+            tdir = root / "L3" / "Tstar_1.04"
+            tdir.mkdir(parents=True)
+            (tdir / "Restart.cooldown.76000000").write_bytes(b"restart")
+
+            with self.assertRaisesRegex(ValueError, "whitespace"):
+                suite.create_suite(
+                    root=root,
+                    suite_dir=Path(td) / "anneal_suite",
+                    output_root=Path(td) / "large outputs",
+                    lengths=("L3",),
+                    loops=7,
+                    seeds=(101, 102, 103, 104, 105, 106, 107),
+                )
+
     def test_run_anneal_launches_fake_lammps_for_multiple_loops(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

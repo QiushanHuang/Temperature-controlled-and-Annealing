@@ -104,7 +104,7 @@ def _params_payload(
             "tail_id": "auto",
         },
         "output": {
-            "output_root": case.result_dir.name,
+            "output_root": str(case.result_dir),
             "overwrite": overwrite,
         },
         "simulation": {
@@ -131,7 +131,7 @@ def _params_payload(
             "omp_threads": int(omp_threads),
             "mpiexec": str(mpiexec),
             "lammps_bin": str(lammps_bin),
-            "result_dir": case.result_dir.name,
+            "result_dir": str(case.result_dir),
         },
     }
 
@@ -161,6 +161,7 @@ def create_suite(
     *,
     root: str | Path = DEFAULT_ROOT,
     suite_dir: str | Path | None = None,
+    output_root: str | Path | None = None,
     lengths: Iterable[str] = DEFAULT_LENGTHS,
     loops: int = 7,
     seeds: Sequence[int] = DEFAULT_SEEDS,
@@ -173,6 +174,14 @@ def create_suite(
     overwrite: bool = False,
 ) -> Path:
     root = Path(root).expanduser().resolve()
+    output_base = None
+    if output_root is not None:
+        output_base = Path(output_root).expanduser().resolve()
+        if any(ch.isspace() for ch in str(output_base)):
+            raise ValueError(
+                f"output_root contains whitespace: {output_base}. "
+                "Use a no-space mount path or symlink such as /media/star/MyPassport2."
+            )
     if suite_dir is None:
         suite_path = root / f"anneal_hot{_hot_tag(hot_t)}_{_run_tag(mpi_ranks, omp_threads)}_loops{loops}_suite"
     else:
@@ -205,6 +214,7 @@ def create_suite(
         for tstar_dir in tstar_dirs:
             tstar = tstar_dir.name.split("Tstar_", 1)[1]
             case_id = _case_id(str(length), tstar)
+            result_base = output_base / str(length) / tstar_dir.name if output_base is not None else tstar_dir
             case = SuiteCase(
                 case_id=case_id,
                 length=str(length),
@@ -212,7 +222,7 @@ def create_suite(
                 workspace=tstar_dir.resolve(),
                 restart=_find_restart(tstar_dir),
                 params_path=(params_dir / f"{case_id}.json").resolve(),
-                result_dir=(tstar_dir / result_dir_name).resolve(),
+                result_dir=(result_base / result_dir_name).resolve(),
             )
             payload = _params_payload(
                 case=case,
@@ -234,6 +244,7 @@ def create_suite(
         "schema": "temperature-controlled-anneal-heating-cooling-suite-v1",
         "suite_id": suite_path.name,
         "root": str(root),
+        "output_root": str(output_base) if output_base is not None else None,
         "hot_T": float(hot_t),
         "loops": int(loops),
         "seeds": list(seeds),
@@ -278,6 +289,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="Root containing L3 and L7 directories.")
     parser.add_argument("--suite-dir", type=Path, default=None, help="Directory for manifest and generated params.")
+    parser.add_argument("--output-root", type=Path, default=None, help="Optional no-space root for large LAMMPS outputs.")
     parser.add_argument("--lengths", nargs="+", default=list(DEFAULT_LENGTHS), help="Length directories to scan.")
     parser.add_argument("--loops", type=int, default=7, help="Independent loops per Tstar case.")
     parser.add_argument("--seeds", nargs="+", type=int, default=list(DEFAULT_SEEDS), help="Velocity seeds, one per loop.")
@@ -296,6 +308,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     manifest = create_suite(
         root=args.root,
         suite_dir=args.suite_dir,
+        output_root=args.output_root,
         lengths=args.lengths,
         loops=args.loops,
         seeds=args.seeds,

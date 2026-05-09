@@ -51,6 +51,23 @@ python3 /Users/joshua/Desktop/MD/Temperature-controlled-and-Annealing/scripts/cr
   --overwrite
 ```
 
+To keep large dump/restart outputs on a separate disk, pass a no-space output root:
+
+```bash
+python3 /Users/joshua/Desktop/MD/Temperature-controlled-and-Annealing/scripts/create_heating_cooling_suite.py \
+  --root /home/star/Research/QIUSHAN-HUANG/cooling-loop/heating_cooling \
+  --suite-dir /home/star/Research/QIUSHAN-HUANG/cooling-loop/heating_cooling/anneal_hot1.70_np4omp2_loops7_suite \
+  --output-root /media/star/MyPassport2/cooling-loop-output \
+  --overwrite
+```
+
+If the disk is mounted as `/media/star/My Passport2`, create a no-space symlink first:
+
+```bash
+ln -s "/media/star/My Passport2" /media/star/MyPassport2
+mkdir -p /media/star/MyPassport2/cooling-loop-output
+```
+
 This writes one params file per Tstar case under:
 
 ```text
@@ -69,6 +86,12 @@ Outputs are created inside each Tstar folder as:
 Tstar_x.xx/anneal_hot1.70_np4omp2_loops7/loopN_seed/
 ```
 
+With `--output-root /media/star/MyPassport2/cooling-loop-output`, outputs are created as:
+
+```text
+/media/star/MyPassport2/cooling-loop-output/L3/Tstar_1.04/anneal_hot1.70_np4omp2_loops7/loopN_seed/
+```
+
 ## Server tmux Launch
 
 The tmux launcher follows the same pattern as `polymer-network-aEa-project`: it builds a manifest, creates `tmux/runners`, `tmux/logs`, `tmux/status`, checks CPU use, and launches one tmux session per L3/L7 Tstar case.
@@ -78,10 +101,26 @@ cd /Users/joshua/Desktop/MD/Temperature-controlled-and-Annealing
 DRY_RUN_ONLY=1 ./scripts/server_tmux_heating_cooling.sh
 ```
 
+Server example with the data in `/home/star/Research/QIUSHAN-HUANG/cooling-loop/heating_cooling` and outputs on the external disk symlink:
+
+```bash
+cd /home/star/Research/QIUSHAN-HUANG/cooling-loop/Temperature-controlled-and-Annealing
+
+RUN_ROOT=/home/star/Research/QIUSHAN-HUANG/cooling-loop/heating_cooling \
+OUTPUT_ROOT=/media/star/MyPassport2/cooling-loop-output \
+CPU_TOTAL=512 \
+DRY_RUN_ONLY=1 \
+./scripts/server_tmux_heating_cooling.sh
+```
+
 After checking the manifest, launch real runs:
 
 ```bash
-CPU_TOTAL=512 OVERWRITE_OUTPUTS=1 ./scripts/server_tmux_heating_cooling.sh
+RUN_ROOT=/home/star/Research/QIUSHAN-HUANG/cooling-loop/heating_cooling \
+OUTPUT_ROOT=/media/star/MyPassport2/cooling-loop-output \
+CPU_TOTAL=512 \
+OVERWRITE_OUTPUTS=1 \
+./scripts/server_tmux_heating_cooling.sh
 ```
 
 For the current `/Volumes/TRACER/heating_cooling` tree, L3+L7 contains 57 Tstar cases. At `np4omp2`, that is `57 * 4 * 2 = 456` CPUs if every case is launched at once. The script keeps a CPU guard, so leave `CPU_TOTAL` at your real allocation value.
@@ -97,6 +136,8 @@ CPU_TOTAL=512
 LENGTHS="L3 L7"
 SEEDS="111111 222222 333333 444444 555555 666666 777777"
 ```
+
+The LAMMPS binary must include at least `MOLECULE`, `ASPHERE`, and `RIGID`. The tmux launcher checks this before launching cases.
 
 ## CPU Settings
 
