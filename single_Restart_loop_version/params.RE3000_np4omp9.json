@@ -1,8 +1,7 @@
 {
   "workspace": "cwd",
   "input": {
-    "restart_file": "auto",
-    "restart_glob": "Restart*",
+    "restart_file": "Restart.Cooling_heating_L7_from_RE3000",
     "head_id": "auto",
     "tail_id": "auto"
   },
