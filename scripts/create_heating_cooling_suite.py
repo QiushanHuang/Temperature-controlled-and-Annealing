@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import stat
 import sys
 from dataclasses import dataclass
@@ -82,6 +84,21 @@ def _run_tag(mpi_ranks: int, omp_threads: int) -> str:
     return f"np{int(mpi_ranks)}omp{int(omp_threads)}"
 
 
+def _absolute_no_resolve(path: str | Path) -> Path:
+    expanded = Path(path).expanduser()
+    if not expanded.is_absolute():
+        expanded = Path.cwd() / expanded
+    return Path(os.path.abspath(os.fspath(expanded)))
+
+
+def _normalize_lammps_args(raw_args: str | Sequence[str] | None, omp_threads: int) -> tuple[str, ...]:
+    if raw_args is None:
+        return ("-sf", "omp", "-pk", "omp", str(omp_threads)) if omp_threads > 1 else ()
+    if isinstance(raw_args, str):
+        return tuple(shlex.split(raw_args))
+    return tuple(str(arg) for arg in raw_args)
+
+
 def _params_payload(
     *,
     case: SuiteCase,
@@ -93,6 +110,7 @@ def _params_payload(
     omp_threads: int,
     mpiexec: str,
     lammps_bin: str,
+    lammps_args: Sequence[str],
     overwrite: bool,
 ) -> dict[str, object]:
     return {
@@ -104,7 +122,7 @@ def _params_payload(
             "tail_id": "auto",
         },
         "output": {
-            "output_root": case.result_dir.name,
+            "output_root": str(case.result_dir),
             "overwrite": overwrite,
         },
         "simulation": {
@@ -131,7 +149,8 @@ def _params_payload(
             "omp_threads": int(omp_threads),
             "mpiexec": str(mpiexec),
             "lammps_bin": str(lammps_bin),
-            "result_dir": case.result_dir.name,
+            "lammps_args": [str(arg) for arg in lammps_args],
+            "result_dir": str(case.result_dir),
         },
     }
 
@@ -161,6 +180,7 @@ def create_suite(
     *,
     root: str | Path = DEFAULT_ROOT,
     suite_dir: str | Path | None = None,
+    output_root: str | Path | None = None,
     lengths: Iterable[str] = DEFAULT_LENGTHS,
     loops: int = 7,
     seeds: Sequence[int] = DEFAULT_SEEDS,
@@ -170,9 +190,18 @@ def create_suite(
     omp_threads: int = DEFAULT_OMP_THREADS,
     mpiexec: str = DEFAULT_MPIEXEC,
     lammps_bin: str = DEFAULT_LAMMPS_BIN,
+    lammps_args: str | Sequence[str] | None = None,
     overwrite: bool = False,
 ) -> Path:
     root = Path(root).expanduser().resolve()
+    output_base = None
+    if output_root is not None:
+        output_base = _absolute_no_resolve(output_root)
+        if any(ch.isspace() for ch in str(output_base)):
+            raise ValueError(
+                f"output_root contains whitespace: {output_base}. "
+                "Use a no-space mount path or symlink such as /home/star/MyPassport2."
+            )
     if suite_dir is None:
         suite_path = root / f"anneal_hot{_hot_tag(hot_t)}_{_run_tag(mpi_ranks, omp_threads)}_loops{loops}_suite"
     else:
@@ -186,6 +215,7 @@ def create_suite(
         raise ValueError("loops must be positive")
     if len(seeds) != loops:
         raise ValueError("number of seeds must equal loops")
+    lammps_args = _normalize_lammps_args(lammps_args, omp_threads)
 
     params_dir = suite_path / "params"
     params_dir.mkdir(parents=True, exist_ok=True)
@@ -205,6 +235,7 @@ def create_suite(
         for tstar_dir in tstar_dirs:
             tstar = tstar_dir.name.split("Tstar_", 1)[1]
             case_id = _case_id(str(length), tstar)
+            result_base = output_base / str(length) / tstar_dir.name if output_base is not None else tstar_dir
             case = SuiteCase(
                 case_id=case_id,
                 length=str(length),
@@ -212,7 +243,7 @@ def create_suite(
                 workspace=tstar_dir.resolve(),
                 restart=_find_restart(tstar_dir),
                 params_path=(params_dir / f"{case_id}.json").resolve(),
-                result_dir=(tstar_dir / result_dir_name).resolve(),
+                result_dir=_absolute_no_resolve(result_base / result_dir_name),
             )
             payload = _params_payload(
                 case=case,
@@ -224,6 +255,7 @@ def create_suite(
                 omp_threads=omp_threads,
                 mpiexec=mpiexec,
                 lammps_bin=lammps_bin,
+                lammps_args=lammps_args,
                 overwrite=overwrite,
             )
             case.params_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -234,6 +266,7 @@ def create_suite(
         "schema": "temperature-controlled-anneal-heating-cooling-suite-v1",
         "suite_id": suite_path.name,
         "root": str(root),
+        "output_root": str(output_base) if output_base is not None else None,
         "hot_T": float(hot_t),
         "loops": int(loops),
         "seeds": list(seeds),
@@ -252,6 +285,7 @@ def create_suite(
             "omp_threads": int(omp_threads),
             "mpiexec": str(mpiexec),
             "lammps_bin": str(lammps_bin),
+            "lammps_args": [str(arg) for arg in lammps_args],
         },
         "run_all_script": str(run_all_script.resolve()),
         "cases": [
@@ -278,6 +312,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="Root containing L3 and L7 directories.")
     parser.add_argument("--suite-dir", type=Path, default=None, help="Directory for manifest and generated params.")
+    parser.add_argument("--output-root", type=Path, default=None, help="Optional no-space root for large LAMMPS outputs.")
     parser.add_argument("--lengths", nargs="+", default=list(DEFAULT_LENGTHS), help="Length directories to scan.")
     parser.add_argument("--loops", type=int, default=7, help="Independent loops per Tstar case.")
     parser.add_argument("--seeds", nargs="+", type=int, default=list(DEFAULT_SEEDS), help="Velocity seeds, one per loop.")
@@ -287,6 +322,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--omp-threads", type=int, default=DEFAULT_OMP_THREADS, help="OMP threads per MPI rank.")
     parser.add_argument("--mpiexec", default=DEFAULT_MPIEXEC, help="MPI launcher.")
     parser.add_argument("--lammps-bin", default=DEFAULT_LAMMPS_BIN, help="LAMMPS executable.")
+    parser.add_argument(
+        "--lammps-args",
+        default=None,
+        help="Extra LAMMPS command-line arguments as one quoted string. Default: '-sf omp -pk omp <omp_threads>' when omp_threads > 1.",
+    )
     parser.add_argument("--overwrite", action="store_true", help="Set output.overwrite=true in generated params.")
     return parser.parse_args(argv)
 
@@ -296,6 +336,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     manifest = create_suite(
         root=args.root,
         suite_dir=args.suite_dir,
+        output_root=args.output_root,
         lengths=args.lengths,
         loops=args.loops,
         seeds=args.seeds,
@@ -305,6 +346,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         omp_threads=args.omp_threads,
         mpiexec=args.mpiexec,
         lammps_bin=args.lammps_bin,
+        lammps_args=args.lammps_args,
         overwrite=args.overwrite,
     )
     data = json.loads(manifest.read_text(encoding="utf-8"))

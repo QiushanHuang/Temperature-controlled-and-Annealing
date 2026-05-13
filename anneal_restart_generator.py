@@ -110,6 +110,13 @@ def loop_dir_name(loop_index: int, seed: int) -> str:
     return f"loop{loop_index}_{seed}"
 
 
+def _absolute_no_resolve(path: str | Path) -> Path:
+    expanded = Path(path).expanduser()
+    if not expanded.is_absolute():
+        expanded = Path.cwd() / expanded
+    return Path(os.path.abspath(os.fspath(expanded)))
+
+
 def finalize_config(config: GeneratorConfig) -> GeneratorConfig:
     cool_back_steps = config.cool_back_steps
     if cool_back_steps is None:
@@ -125,8 +132,8 @@ def finalize_config(config: GeneratorConfig) -> GeneratorConfig:
         restart_every = config.dump_every * config.restart_dump_multiple
 
     finalized = GeneratorConfig(
-        restart=Path(config.restart).expanduser().resolve(),
-        output_root=Path(config.output_root).expanduser().resolve(),
+        restart=_absolute_no_resolve(config.restart),
+        output_root=_absolute_no_resolve(config.output_root),
         target_t=float(config.target_t),
         hot_t=float(config.hot_t),
         loops=int(config.loops),

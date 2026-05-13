@@ -1,17 +1,16 @@
 {
   "workspace": "cwd",
   "input": {
-    "restart_file": "auto",
-    "restart_glob": "Restart*",
+    "restart_file": "Restart.Cooling_heating_L7_from_RE3000",
     "head_id": "auto",
     "tail_id": "auto"
   },
   "output": {
-    "output_root": "anneal_hot1.70_np4omp2_loops7",
+    "temperature_dir_template": "Tstar_{T:.2f}",
     "overwrite": false
   },
   "simulation": {
-    "target_T": 1.40,
+    "target_T_list": [0.55, 0.65, 0.75, 0.85, 0.95, 1.05],
     "hot_T": 1.70,
     "loops": 7,
     "seeds": [111111, 222222, 333333, 444444, 555555, 666666, 777777],
@@ -31,10 +30,9 @@
   "run": {
     "run_lammps": false,
     "mpi_ranks": 4,
-    "omp_threads": 2,
+    "omp_threads": 10,
     "mpiexec": "mpiexec",
-    "lammps_bin": "/home/star/Research/software/lammps-22Jul2025/build/lmp",
-    "lammps_args": ["-sf", "omp", "-pk", "omp", "2"],
-    "result_dir": "anneal_hot1.70_np4omp2_loops7"
+    "lammps_bin": "/home/hkust/mylammps/build/lmp",
+    "lammps_args": ["-sf", "omp", "-pk", "omp", "10"]
   }
 }

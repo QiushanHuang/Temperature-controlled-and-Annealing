@@ -51,6 +51,23 @@ python3 /Users/joshua/Desktop/MD/Temperature-controlled-and-Annealing/scripts/cr
   --overwrite
 ```
 
+To keep large dump/restart outputs on a separate disk, pass a no-space output root:
+
+```bash
+python3 /Users/joshua/Desktop/MD/Temperature-controlled-and-Annealing/scripts/create_heating_cooling_suite.py \
+  --root /home/star/Research/QIUSHAN-HUANG/cooling-loop/heating_cooling \
+  --suite-dir /home/star/Research/QIUSHAN-HUANG/cooling-loop/heating_cooling/anneal_hot1.70_np4omp2_loops7_suite \
+  --output-root /media/star/MyPassport2/cooling-loop-output \
+  --overwrite
+```
+
+If the disk is mounted as `/media/star/My Passport2`, create a no-space symlink first:
+
+```bash
+ln -s "/media/star/My Passport2" /media/star/MyPassport2
+mkdir -p /media/star/MyPassport2/cooling-loop-output
+```
+
 This writes one params file per Tstar case under:
 
 ```text
@@ -69,6 +86,12 @@ Outputs are created inside each Tstar folder as:
 Tstar_x.xx/anneal_hot1.70_np4omp2_loops7/loopN_seed/
 ```
 
+With `--output-root /media/star/MyPassport2/cooling-loop-output`, outputs are created as:
+
+```text
+/media/star/MyPassport2/cooling-loop-output/L3/Tstar_1.04/anneal_hot1.70_np4omp2_loops7/loopN_seed/
+```
+
 ## Server tmux Launch
 
 The tmux launcher follows the same pattern as `polymer-network-aEa-project`: it builds a manifest, creates `tmux/runners`, `tmux/logs`, `tmux/status`, checks CPU use, and launches one tmux session per L3/L7 Tstar case.
@@ -78,10 +101,26 @@ cd /Users/joshua/Desktop/MD/Temperature-controlled-and-Annealing
 DRY_RUN_ONLY=1 ./scripts/server_tmux_heating_cooling.sh
 ```
 
+Server example with the data in `/home/star/Research/QIUSHAN-HUANG/cooling-loop/heating_cooling` and outputs on the external disk symlink:
+
+```bash
+cd /home/star/Research/QIUSHAN-HUANG/cooling-loop/Temperature-controlled-and-Annealing
+
+RUN_ROOT=/home/star/Research/QIUSHAN-HUANG/cooling-loop/heating_cooling \
+OUTPUT_ROOT=/media/star/MyPassport2/cooling-loop-output \
+CPU_TOTAL=512 \
+DRY_RUN_ONLY=1 \
+./scripts/server_tmux_heating_cooling.sh
+```
+
 After checking the manifest, launch real runs:
 
 ```bash
-CPU_TOTAL=512 OVERWRITE_OUTPUTS=1 ./scripts/server_tmux_heating_cooling.sh
+RUN_ROOT=/home/star/Research/QIUSHAN-HUANG/cooling-loop/heating_cooling \
+OUTPUT_ROOT=/media/star/MyPassport2/cooling-loop-output \
+CPU_TOTAL=512 \
+OVERWRITE_OUTPUTS=1 \
+./scripts/server_tmux_heating_cooling.sh
 ```
 
 For the current `/Volumes/TRACER/heating_cooling` tree, L3+L7 contains 57 Tstar cases. At `np4omp2`, that is `57 * 4 * 2 = 456` CPUs if every case is launched at once. The script keeps a CPU guard, so leave `CPU_TOTAL` at your real allocation value.
@@ -93,10 +132,13 @@ MPI_RANKS=4
 OMP_THREADS=2
 MPIEXEC=mpiexec
 LAMMPS_BIN=/home/star/Research/software/lammps-22Jul2025/build/lmp
+LAMMPS_ARGS="-sf omp -pk omp 2"
 CPU_TOTAL=512
 LENGTHS="L3 L7"
 SEEDS="111111 222222 333333 444444 555555 666666 777777"
 ```
+
+The LAMMPS binary must include at least `MOLECULE`, `ASPHERE`, `RIGID`, and `OPENMP`. The tmux launcher checks this before launching cases. `OMP_NUM_THREADS=2` only sets the thread count; `LAMMPS_ARGS="-sf omp -pk omp 2"` enables the OpenMP accelerated `/omp` styles where LAMMPS provides them.
 
 ## CPU Settings
 
@@ -109,6 +151,7 @@ The `run` section controls LAMMPS execution:
   "omp_threads": 2,
   "mpiexec": "mpiexec",
   "lammps_bin": "/home/star/Research/software/lammps-22Jul2025/build/lmp",
+  "lammps_args": ["-sf", "omp", "-pk", "omp", "2"],
   "result_dir": "anneal_hot1.70_np4omp2_loops7"
 }
 ```
@@ -116,5 +159,26 @@ The `run` section controls LAMMPS execution:
 This generates:
 
 ```bash
-OMP_NUM_THREADS=2 mpiexec -np 4 /home/star/Research/software/lammps-22Jul2025/build/lmp -in in.loop.lmp
+OMP_NUM_THREADS=2 mpiexec -np 4 /home/star/Research/software/lammps-22Jul2025/build/lmp -sf omp -pk omp 2 -in in.loop.lmp
+```
+
+If your LAMMPS binary is missing `OPENMP`, rebuild it with the required packages:
+
+```bash
+cd /home/star/Research/software/lammps-22Jul2025
+cmake -S cmake -B build-omp \
+  -D CMAKE_BUILD_TYPE=Release \
+  -D BUILD_MPI=ON \
+  -D BUILD_OMP=ON \
+  -D PKG_MOLECULE=ON \
+  -D PKG_ASPHERE=ON \
+  -D PKG_RIGID=ON \
+  -D PKG_OPENMP=ON
+cmake --build build-omp -j 32
+```
+
+Then launch with:
+
+```bash
+LAMMPS_BIN=/home/star/Research/software/lammps-22Jul2025/build-omp/lmp
 ```

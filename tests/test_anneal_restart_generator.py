@@ -12,6 +12,21 @@ from scripts import create_heating_cooling_suite as suite
 
 
 class AnnealRestartGeneratorTests(unittest.TestCase):
+    def test_openmp_lammps_build_script_keeps_existing_build_and_enables_required_packages(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "build_lammps_openmp.sh"
+        self.assertTrue(script.is_file())
+        text = script.read_text(encoding="utf-8")
+        self.assertIn('BUILD_DIR="${BUILD_DIR:-$LAMMPS_ROOT/build_openmp}"', text)
+        for flag in (
+            "BUILD_MPI=on",
+            "BUILD_OMP=on",
+            "PKG_MOLECULE=on",
+            "PKG_ASPHERE=on",
+            "PKG_RIGID=on",
+            "PKG_OPENMP=on",
+        ):
+            self.assertIn(flag, text)
+
     def test_derive_cool_steps_uses_requested_cooling_rate(self):
         self.assertEqual(
             gen.derive_cool_steps(target_t=1.40, hot_t=1.52, cool_dt=0.02, steps_per_dt=100000),
@@ -68,6 +83,30 @@ class AnnealRestartGeneratorTests(unittest.TestCase):
                         loops=1,
                     )
                 )
+
+    def test_finalize_config_preserves_no_space_restart_symlink(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            real_dir = root / "My Passport2"
+            real_dir.mkdir()
+            restart = real_dir / "Restart.input"
+            restart.write_bytes(b"restart")
+            symlink_dir = root / "MyPassport2"
+            symlink_dir.symlink_to(real_dir, target_is_directory=True)
+
+            cfg = gen.finalize_config(
+                gen.GeneratorConfig(
+                    restart=symlink_dir / "Restart.input",
+                    output_root=root / "out",
+                    target_t=1.40,
+                    hot_t=1.70,
+                    loops=1,
+                    explicit_seeds=[111111],
+                )
+            )
+
+            self.assertIn("MyPassport2", str(cfg.restart))
+            self.assertNotIn("My Passport2", str(cfg.restart))
 
     def test_numeric_head_tail_overrides_render_without_lammps_string_comparison(self):
         with tempfile.TemporaryDirectory() as td:
@@ -383,6 +422,84 @@ class AnnealRestartGeneratorTests(unittest.TestCase):
             self.assertIn("OMP_NUM_THREADS=2 mpiexec -np 4 lmp_mpi", run_script)
             self.assertFalse(run_cfg.run_lammps)
 
+    def test_lammps_args_are_appended_after_executable(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            restart = root / "Restart.input"
+            restart.write_bytes(b"restart")
+            params = root / "params.json"
+            params.write_text(
+                json.dumps(
+                    {
+                        "input": {"restart_file": "Restart.input"},
+                        "output": {"output_root": "anneal_inputs"},
+                        "simulation": {
+                            "target_T": 1.40,
+                            "hot_T": 1.42,
+                            "loops": 1,
+                            "seeds": [123456],
+                        },
+                        "run": {
+                            "run_lammps": False,
+                            "mpi_ranks": 4,
+                            "omp_threads": 2,
+                            "mpiexec": "mpiexec",
+                            "lammps_bin": "/path/to/lmp",
+                            "lammps_args": ["-sf", "omp", "-pk", "omp", "2"],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            cfg, _ = run_anneal.load_project_config(params)
+
+            self.assertEqual(
+                cfg.lammps_command,
+                "OMP_NUM_THREADS=2 mpiexec -np 4 /path/to/lmp -sf omp -pk omp 2",
+            )
+
+    def test_create_suite_cli_accepts_quoted_lammps_args(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "inputs"
+            tdir = root / "L3" / "Tstar_1.04"
+            tdir.mkdir(parents=True)
+            (tdir / "Restart.cooldown.76000000").write_bytes(b"restart")
+            suite_dir = Path(td) / "suite"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(suite.__file__).resolve()),
+                    "--root",
+                    str(root),
+                    "--suite-dir",
+                    str(suite_dir),
+                    "--lengths",
+                    "L3",
+                    "--loops",
+                    "7",
+                    "--seeds",
+                    "101",
+                    "102",
+                    "103",
+                    "104",
+                    "105",
+                    "106",
+                    "107",
+                    "--lammps-args",
+                    "-sf omp -pk omp 2",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads((suite_dir / "manifest.json").read_text(encoding="utf-8"))
+            data = json.loads(Path(manifest["cases"][0]["params_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(data["run"]["lammps_args"], ["-sf", "omp", "-pk", "omp", "2"])
+
     def test_run_anneal_accepts_multiple_param_files_sequentially(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -535,7 +652,84 @@ class AnnealRestartGeneratorTests(unittest.TestCase):
             self.assertEqual(data["run"]["mpi_ranks"], 4)
             self.assertEqual(data["run"]["omp_threads"], 2)
             self.assertEqual(data["run"]["lammps_bin"], "/home/star/Research/software/lammps-22Jul2025/build/lmp")
+            self.assertEqual(data["run"]["lammps_args"], ["-sf", "omp", "-pk", "omp", "2"])
             self.assertTrue(data["run"]["result_dir"].endswith("np4omp2_loops7"))
+
+    def test_heating_cooling_suite_can_place_outputs_under_separate_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "inputs"
+            output_root = Path(td) / "large_outputs"
+            tdir = root / "L3" / "Tstar_1.04"
+            tdir.mkdir(parents=True)
+            (tdir / "Restart.cooldown.76000000").write_bytes(b"restart")
+
+            manifest_path = suite.create_suite(
+                root=root,
+                suite_dir=Path(td) / "anneal_suite",
+                output_root=output_root,
+                lengths=("L3",),
+                loops=7,
+                seeds=(101, 102, 103, 104, 105, 106, 107),
+                hot_t=1.7,
+            )
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            case = manifest["cases"][0]
+            self.assertEqual(manifest["output_root"], str(output_root.absolute()))
+            self.assertEqual(
+                Path(case["result_dir"]),
+                output_root.absolute() / "L3" / "Tstar_1.04" / "anneal_hot1.70_np4omp2_loops7",
+            )
+            data = json.loads(Path(case["params_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(data["workspace"], str(tdir.resolve()))
+            self.assertEqual(data["run"]["result_dir"], case["result_dir"])
+
+    def test_heating_cooling_suite_rejects_output_root_with_whitespace(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "inputs"
+            tdir = root / "L3" / "Tstar_1.04"
+            tdir.mkdir(parents=True)
+            (tdir / "Restart.cooldown.76000000").write_bytes(b"restart")
+
+            with self.assertRaisesRegex(ValueError, "whitespace"):
+                suite.create_suite(
+                    root=root,
+                    suite_dir=Path(td) / "anneal_suite",
+                    output_root=Path(td) / "large outputs",
+                    lengths=("L3",),
+                    loops=7,
+                    seeds=(101, 102, 103, 104, 105, 106, 107),
+                )
+
+    def test_heating_cooling_suite_preserves_no_space_output_symlink(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "inputs"
+            tdir = root / "L3" / "Tstar_1.04"
+            tdir.mkdir(parents=True)
+            (tdir / "Restart.cooldown.76000000").write_bytes(b"restart")
+            real_disk = Path(td) / "My Passport2"
+            real_disk.mkdir()
+            symlink_disk = Path(td) / "MyPassport2"
+            symlink_disk.symlink_to(real_disk, target_is_directory=True)
+            output_root = symlink_disk / "cooling-loop-output"
+
+            manifest_path = suite.create_suite(
+                root=root,
+                suite_dir=Path(td) / "anneal_suite",
+                output_root=output_root,
+                lengths=("L3",),
+                loops=7,
+                seeds=(101, 102, 103, 104, 105, 106, 107),
+            )
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            case = manifest["cases"][0]
+            self.assertEqual(manifest["output_root"], str(output_root.absolute()))
+            self.assertIn("/MyPassport2/", case["result_dir"])
+            self.assertNotIn("My Passport2", case["result_dir"])
+            cfg, _ = run_anneal.load_project_config(case["params_path"])
+            self.assertIn("/MyPassport2/", str(cfg.output_root))
+            self.assertNotIn("My Passport2", str(cfg.output_root))
 
     def test_run_anneal_launches_fake_lammps_for_multiple_loops(self):
         with tempfile.TemporaryDirectory() as td:

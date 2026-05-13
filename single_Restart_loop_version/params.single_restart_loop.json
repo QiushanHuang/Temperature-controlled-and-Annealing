@@ -7,11 +7,11 @@
     "tail_id": "auto"
   },
   "output": {
-    "output_root": "anneal_hot1.70_np4omp2_loops7",
+    "temperature_dir_template": "Tstar_{T:.2f}",
     "overwrite": false
   },
   "simulation": {
-    "target_T": 1.40,
+    "target_T_list": [1.20, 1.10, 1.00, 0.90, 0.80, 0.70, 0.60, 0.50, 0.40],
     "hot_T": 1.70,
     "loops": 7,
     "seeds": [111111, 222222, 333333, 444444, 555555, 666666, 777777],
@@ -31,10 +31,9 @@
   "run": {
     "run_lammps": false,
     "mpi_ranks": 4,
-    "omp_threads": 2,
+    "omp_threads": 9,
     "mpiexec": "mpiexec",
     "lammps_bin": "/home/star/Research/software/lammps-22Jul2025/build/lmp",
-    "lammps_args": ["-sf", "omp", "-pk", "omp", "2"],
-    "result_dir": "anneal_hot1.70_np4omp2_loops7"
+    "lammps_args": ["-sf", "omp", "-pk", "omp", "9"]
   }
 }

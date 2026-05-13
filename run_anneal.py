@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -49,10 +51,19 @@ def _read_json(path: Path) -> dict[str, Any]:
     return data
 
 
-def _resolve_project_path(project_root: Path, value: str | Path) -> Path:
+def _absolute_no_resolve(path: str | Path) -> Path:
+    expanded = Path(path).expanduser()
+    if not expanded.is_absolute():
+        expanded = Path.cwd() / expanded
+    return Path(os.path.abspath(os.fspath(expanded)))
+
+
+def _resolve_project_path(project_root: Path, value: str | Path, *, resolve_symlinks: bool = True) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute():
         path = project_root / path
+    if not resolve_symlinks:
+        return _absolute_no_resolve(path)
     return path.resolve()
 
 
@@ -146,7 +157,7 @@ def load_project_config(params_path: str | Path = DEFAULT_PARAMS) -> tuple[Gener
 
     result_dir = run.get("result_dir")
     output_setting = result_dir if result_dir else output_cfg.get("output_root", "anneal_output")
-    output_root = _resolve_project_path(project_root, str(output_setting))
+    output_root = _resolve_project_path(project_root, str(output_setting), resolve_symlinks=False)
 
     loops = int(simulation["loops"])
     explicit_seeds = simulation.get("seeds")
@@ -232,7 +243,18 @@ def _build_lammps_command(run: dict[str, Any]) -> str:
     if mpi_ranks != 1:
         parts.extend([str(run.get("mpiexec", "mpiexec")), "-np", str(mpi_ranks)])
     parts.append(lammps_bin)
+    parts.extend(_lammps_args(run.get("lammps_args", [])))
     return " ".join(parts)
+
+
+def _lammps_args(raw_args: Any) -> list[str]:
+    if raw_args in (None, ""):
+        return []
+    if isinstance(raw_args, str):
+        return shlex.split(raw_args)
+    if isinstance(raw_args, list):
+        return [str(arg) for arg in raw_args]
+    raise ValueError("run.lammps_args must be a string or a JSON list")
 
 
 def _default_params_path() -> Path:

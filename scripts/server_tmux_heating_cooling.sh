@@ -3,12 +3,20 @@ set -euo pipefail
 
 CODE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ROOT="${RUN_ROOT:-/Volumes/TRACER/heating_cooling}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-}"
 SUITE_DIR="${SUITE_DIR:-anneal_hot1.70_np4omp2_loops7_suite}"
 
 MPI_RANKS="${MPI_RANKS:-4}"
 OMP_THREADS="${OMP_THREADS:-2}"
 MPIEXEC="${MPIEXEC:-mpiexec}"
 LAMMPS_BIN="${LAMMPS_BIN:-/home/star/Research/software/lammps-22Jul2025/build/lmp}"
+if [[ -z "${LAMMPS_ARGS+x}" ]]; then
+  if (( OMP_THREADS > 1 )); then
+    LAMMPS_ARGS="-sf omp -pk omp $OMP_THREADS"
+  else
+    LAMMPS_ARGS=""
+  fi
+fi
 
 CPU_TOTAL="${CPU_TOTAL:-256}"
 DRY_RUN_ONLY="${DRY_RUN_ONLY:-0}"
@@ -40,6 +48,36 @@ if (( ${#SEED_ARGS[@]} != LOOPS )); then
   exit 2
 fi
 
+if [[ -n "$OUTPUT_ROOT" && "$OUTPUT_ROOT" =~ [[:space:]] ]]; then
+  echo "OUTPUT_ROOT contains whitespace: $OUTPUT_ROOT" >&2
+  echo "LAMMPS input paths are intentionally kept whitespace-free." >&2
+  echo "Create a no-space symlink, for example: ln -s '/media/star/My Passport2' /media/star/MyPassport2" >&2
+  exit 2
+fi
+
+if [[ ! -x "$LAMMPS_BIN" ]]; then
+  echo "LAMMPS_BIN is not executable: $LAMMPS_BIN" >&2
+  exit 2
+fi
+
+LAMMPS_HELP="$("$LAMMPS_BIN" -h 2>&1 || true)"
+REQUIRED_PACKAGES=(MOLECULE ASPHERE RIGID)
+if (( OMP_THREADS > 1 )) || [[ " $LAMMPS_ARGS " == *" omp "* ]]; then
+  REQUIRED_PACKAGES+=(OPENMP)
+fi
+MISSING_PACKAGES=()
+for package in "${REQUIRED_PACKAGES[@]}"; do
+  if ! grep -Eq "(^|[[:space:]])${package}($|[[:space:]])" <<< "$LAMMPS_HELP"; then
+    MISSING_PACKAGES+=("$package")
+  fi
+done
+if (( ${#MISSING_PACKAGES[@]} > 0 )); then
+  echo "LAMMPS binary is missing required package(s): ${MISSING_PACKAGES[*]}" >&2
+  echo "This restart/input needs MOLECULE for atom_style bond, ASPHERE for ellipsoids/Gay-Berne, RIGID for rigid/nvt/small, and OPENMP for -sf omp/-pk omp." >&2
+  echo "Use or rebuild a LAMMPS binary with these packages enabled, then set LAMMPS_BIN to that executable." >&2
+  exit 2
+fi
+
 SUITE_ABS="$RUN_ROOT/$SUITE_DIR"
 MANIFEST="$SUITE_ABS/manifest.json"
 TMUX_DIR="$SUITE_ABS/tmux"
@@ -60,6 +98,13 @@ CREATE_ARGS=(
   --mpiexec "$MPIEXEC"
   --lammps-bin "$LAMMPS_BIN"
 )
+if [[ -n "$LAMMPS_ARGS" ]]; then
+  CREATE_ARGS+=(--lammps-args "$LAMMPS_ARGS")
+fi
+
+if [[ -n "$OUTPUT_ROOT" ]]; then
+  CREATE_ARGS+=(--output-root "$OUTPUT_ROOT")
+fi
 
 if [[ "$DRY_RUN_ONLY" != "1" ]]; then
   CREATE_ARGS+=(--run-lammps)
@@ -71,13 +116,14 @@ fi
 
 echo "Code root    : $CODE_ROOT"
 echo "Run root     : $RUN_ROOT"
+echo "Output root  : ${OUTPUT_ROOT:-<inside each Tstar folder>}"
 echo "Suite        : $SUITE_ABS"
 echo "Lengths      : ${LENGTH_ARGS[*]}"
 echo "Seeds        : ${SEED_ARGS[*]}"
 echo "Loops/case   : $LOOPS"
 echo "Hot T        : $HOT_T"
 echo "Per case     : np=${MPI_RANKS}, omp=${OMP_THREADS}, CPUs=$(( MPI_RANKS * OMP_THREADS ))"
-echo "MPI command  : ${MPIEXEC} -np ${MPI_RANKS} ${LAMMPS_BIN}"
+echo "MPI command  : ${MPIEXEC} -np ${MPI_RANKS} ${LAMMPS_BIN} ${LAMMPS_ARGS}"
 
 PYTHONPATH="$CODE_ROOT:${PYTHONPATH:-}" python3 "$CODE_ROOT/scripts/create_heating_cooling_suite.py" "${CREATE_ARGS[@]}"
 
@@ -147,7 +193,7 @@ echo "[CASE] $case_id" > $(printf '%q' "$tmux_log")
 echo "[RUN_ROOT] $RUN_ROOT" >> $(printf '%q' "$tmux_log")
 echo "[RESULT] $result_dir" >> $(printf '%q' "$tmux_log")
 echo "[PARAMS] $params_path" >> $(printf '%q' "$tmux_log")
-echo "[COMMAND] OMP_NUM_THREADS=$OMP_THREADS $MPIEXEC -np $MPI_RANKS $LAMMPS_BIN" >> $(printf '%q' "$tmux_log")
+echo "[COMMAND] OMP_NUM_THREADS=$OMP_THREADS $MPIEXEC -np $MPI_RANKS $LAMMPS_BIN $LAMMPS_ARGS" >> $(printf '%q' "$tmux_log")
 set +e
 python3 $(printf '%q' "$CODE_ROOT/run_anneal.py") $(printf '%q' "$params_path") >> $(printf '%q' "$tmux_log") 2>&1
 rc=\$?
@@ -187,7 +233,11 @@ chmod +x "$CHECK_SCRIPT"
 echo
 echo "tmux sessions written to: $SESSION_LIST"
 echo "tmux logs are under     : $LOG_DIR"
-echo "case outputs are under  : each Tstar folder / anneal_hot${HOT_T}_np${MPI_RANKS}omp${OMP_THREADS}_loops${LOOPS}"
+if [[ -n "$OUTPUT_ROOT" ]]; then
+  echo "case outputs are under  : $OUTPUT_ROOT/<L3|L7>/Tstar_x.xx/anneal_hot${HOT_T}_np${MPI_RANKS}omp${OMP_THREADS}_loops${LOOPS}"
+else
+  echo "case outputs are under  : each Tstar folder / anneal_hot${HOT_T}_np${MPI_RANKS}omp${OMP_THREADS}_loops${LOOPS}"
+fi
 echo "Check status with       : $CHECK_SCRIPT"
 FIRST_SESSION="$(awk 'NR == 1 {print $1}' "$SESSION_LIST")"
 echo "Attach example          : tmux attach -t $FIRST_SESSION"
