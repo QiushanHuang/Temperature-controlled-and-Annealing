@@ -12,6 +12,21 @@ from scripts import create_heating_cooling_suite as suite
 
 
 class AnnealRestartGeneratorTests(unittest.TestCase):
+    def test_openmp_lammps_build_script_keeps_existing_build_and_enables_required_packages(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "build_lammps_openmp.sh"
+        self.assertTrue(script.is_file())
+        text = script.read_text(encoding="utf-8")
+        self.assertIn('BUILD_DIR="${BUILD_DIR:-$LAMMPS_ROOT/build_openmp}"', text)
+        for flag in (
+            "BUILD_MPI=on",
+            "BUILD_OMP=on",
+            "PKG_MOLECULE=on",
+            "PKG_ASPHERE=on",
+            "PKG_RIGID=on",
+            "PKG_OPENMP=on",
+        ):
+            self.assertIn(flag, text)
+
     def test_derive_cool_steps_uses_requested_cooling_rate(self):
         self.assertEqual(
             gen.derive_cool_steps(target_t=1.40, hot_t=1.52, cool_dt=0.02, steps_per_dt=100000),
