@@ -61,31 +61,55 @@ def _read_json(path: Path) -> dict[str, Any]:
     return data
 
 
+def _same_directory(left: Path, right: Path) -> bool:
+    try:
+        left_stat = left.stat()
+        right_stat = right.stat()
+    except OSError:
+        return False
+    return (left_stat.st_dev, left_stat.st_ino) == (right_stat.st_dev, right_stat.st_ino)
+
+
+def _logical_cwd() -> Path:
+    physical = Path.cwd()
+    pwd = os.environ.get("PWD")
+    if pwd:
+        candidate = Path(pwd).expanduser()
+        if candidate.is_absolute() and _same_directory(candidate, physical):
+            return candidate
+    return physical
+
+
 def _absolute_no_resolve(path: str | Path) -> Path:
     expanded = Path(path).expanduser()
     if not expanded.is_absolute():
-        expanded = Path.cwd() / expanded
+        expanded = _logical_cwd() / expanded
     return Path(os.path.abspath(os.fspath(expanded)))
 
 
 def _resolve_workspace(params_path: Path, data: dict[str, Any]) -> Path:
     workspace = data.get("workspace", "cwd")
     if workspace == "cwd":
-        return Path.cwd().resolve()
+        cwd = _logical_cwd()
+        if _same_directory(params_path.parent, cwd) and any(ch.isspace() for ch in str(cwd)) and not any(
+            ch.isspace() for ch in str(params_path.parent)
+        ):
+            return _absolute_no_resolve(params_path.parent)
+        return _absolute_no_resolve(cwd)
     if workspace == "params":
-        return params_path.parent.resolve()
+        return _absolute_no_resolve(params_path.parent)
     if isinstance(workspace, str):
         path = Path(workspace).expanduser()
         if not path.is_absolute():
             path = params_path.parent / path
-        return path.resolve()
+        return _absolute_no_resolve(path)
     raise ValueError("workspace must be 'cwd', 'params', or a path string")
 
 
 def _discover_restart(workspace: Path, pattern: str) -> Path:
     matches = sorted(path for path in workspace.glob(pattern) if path.is_file() and not path.name.startswith("._"))
     if len(matches) == 1:
-        return matches[0].resolve()
+        return _absolute_no_resolve(matches[0])
     if not matches:
         raise FileNotFoundError(
             f"No restart file matched {pattern!r} in {workspace}. "
@@ -102,7 +126,7 @@ def _resolve_restart(workspace: Path, input_cfg: dict[str, Any]) -> Path:
     restart = Path(str(restart_setting)).expanduser()
     if not restart.is_absolute():
         restart = workspace / restart
-    return restart.resolve()
+    return _absolute_no_resolve(restart)
 
 
 def _target_list(simulation: dict[str, Any]) -> list[float]:
@@ -199,7 +223,7 @@ def _load_sections(params_path: Path) -> tuple[Path, Path, dict[str, Any], dict[
 
 
 def generate_cases(params_path: str | Path = DEFAULT_PARAMS) -> tuple[list[TemperatureCase], SingleRunSettings, Path]:
-    params_path = Path(params_path).expanduser().resolve()
+    params_path = _absolute_no_resolve(params_path)
     workspace, restart, input_cfg, output_cfg, simulation, run = _load_sections(params_path)
     targets = _target_list(simulation)
     dump_every = int(simulation.get("dump_every", DEFAULT_DUMP_EVERY))
@@ -299,7 +323,7 @@ def generate_cases(params_path: str | Path = DEFAULT_PARAMS) -> tuple[list[Tempe
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
-    params_path = Path(args[0]).expanduser().resolve() if args else DEFAULT_PARAMS
+    params_path = _absolute_no_resolve(args[0]) if args else DEFAULT_PARAMS
     cases, settings, manifest_path = generate_cases(params_path)
     print(f"Wrote single-restart manifest: {manifest_path}")
     print(f"Temperature cases: {len(cases)}")

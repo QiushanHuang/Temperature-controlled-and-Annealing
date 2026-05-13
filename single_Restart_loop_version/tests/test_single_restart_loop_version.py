@@ -93,6 +93,42 @@ class SingleRestartLoopVersionTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Multiple restart files", result.stderr + result.stdout)
 
+    def test_preserves_no_space_workspace_symlink_for_restart_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            real_dir = base / "My Passport2"
+            real_dir.mkdir()
+            symlink_dir = base / "MyPassport2"
+            symlink_dir.symlink_to(real_dir, target_is_directory=True)
+            restart = symlink_dir / "Restart.manual"
+            restart.write_bytes(b"restart")
+            params = symlink_dir / "params.single.json"
+            params.write_text(
+                json.dumps(
+                    {
+                        "workspace": "cwd",
+                        "input": {"restart_file": "Restart.manual"},
+                        "output": {"temperature_dir_template": "Tstar_{T:.2f}", "overwrite": False},
+                        "simulation": {"target_T_list": [1.04], "hot_T": 1.70, "loops": 1, "seeds": [111111]},
+                        "run": {"run_lammps": False, "lammps_command": "lmp_serial"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [sys.executable, str(Path(single.__file__).resolve()), str(params)],
+                cwd=symlink_dir,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            text = (symlink_dir / "Tstar_1.04" / "loop1_111111" / "in.loop.lmp").read_text(encoding="utf-8")
+            self.assertIn("MyPassport2", text)
+            self.assertNotIn("My Passport2", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,6 +69,30 @@ class AnnealRestartGeneratorTests(unittest.TestCase):
                     )
                 )
 
+    def test_finalize_config_preserves_no_space_restart_symlink(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            real_dir = root / "My Passport2"
+            real_dir.mkdir()
+            restart = real_dir / "Restart.input"
+            restart.write_bytes(b"restart")
+            symlink_dir = root / "MyPassport2"
+            symlink_dir.symlink_to(real_dir, target_is_directory=True)
+
+            cfg = gen.finalize_config(
+                gen.GeneratorConfig(
+                    restart=symlink_dir / "Restart.input",
+                    output_root=root / "out",
+                    target_t=1.40,
+                    hot_t=1.70,
+                    loops=1,
+                    explicit_seeds=[111111],
+                )
+            )
+
+            self.assertIn("MyPassport2", str(cfg.restart))
+            self.assertNotIn("My Passport2", str(cfg.restart))
+
     def test_numeric_head_tail_overrides_render_without_lammps_string_comparison(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

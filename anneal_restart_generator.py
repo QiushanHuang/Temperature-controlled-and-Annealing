@@ -132,7 +132,7 @@ def finalize_config(config: GeneratorConfig) -> GeneratorConfig:
         restart_every = config.dump_every * config.restart_dump_multiple
 
     finalized = GeneratorConfig(
-        restart=Path(config.restart).expanduser().resolve(),
+        restart=_absolute_no_resolve(config.restart),
         output_root=_absolute_no_resolve(config.output_root),
         target_t=float(config.target_t),
         hot_t=float(config.hot_t),
