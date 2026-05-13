@@ -1,0 +1,38 @@
+{
+  "workspace": "cwd",
+  "input": {
+    "restart_file": "Restart.Cooling_heating_L7_from_RE3000",
+    "head_id": "auto",
+    "tail_id": "auto"
+  },
+  "output": {
+    "temperature_dir_template": "Tstar_{T:.2f}",
+    "overwrite": false
+  },
+  "simulation": {
+    "target_T_list": [0.55, 0.65, 0.75, 0.85, 0.95, 1.05],
+    "hot_T": 1.70,
+    "loops": 7,
+    "seeds": [111111, 222222, 333333, 444444, 555555, 666666, 777777],
+    "timestep": 0.001,
+    "Tdamp": 0.1,
+    "Tchain": 3,
+    "cool_dT": 0.1,
+    "cool_dumps_per_dT": 100,
+    "cool_back_steps": null,
+    "hot_hold_dumps": 100,
+    "target_hold_dumps": 200,
+    "sample_dumps": 4000,
+    "sample_every": 1000,
+    "dump_every": 1000,
+    "restart_interval_dump_frames": 500
+  },
+  "run": {
+    "run_lammps": false,
+    "mpi_ranks": 4,
+    "omp_threads": 10,
+    "mpiexec": "mpiexec",
+    "lammps_bin": "/home/hkust/mylammps/build/lmp",
+    "lammps_args": ["-sf", "omp", "-pk", "omp", "10"]
+  }
+}
