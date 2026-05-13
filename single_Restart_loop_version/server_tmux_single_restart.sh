@@ -4,16 +4,14 @@ set -euo pipefail
 CODE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="${WORKSPACE:-$PWD}"
 
-MPI_RANKS="${MPI_RANKS:-4}"
-OMP_THREADS="${OMP_THREADS:-9}"
-MPIEXEC="${MPIEXEC:-mpiexec}"
-LAMMPS_BIN="${LAMMPS_BIN:-/home/star/Research/software/lammps-22Jul2025/build/lmp}"
-if [[ -z "${LAMMPS_ARGS+x}" ]]; then
-  if (( OMP_THREADS > 1 )); then
-    LAMMPS_ARGS="-sf omp -pk omp $OMP_THREADS"
-  else
-    LAMMPS_ARGS=""
-  fi
+MPI_RANKS_OVERRIDE="${MPI_RANKS-}"
+OMP_THREADS_OVERRIDE="${OMP_THREADS-}"
+MPIEXEC_OVERRIDE="${MPIEXEC-}"
+LAMMPS_BIN_OVERRIDE="${LAMMPS_BIN-}"
+LAMMPS_ARGS_OVERRIDE="${LAMMPS_ARGS-}"
+LAMMPS_ARGS_OVERRIDE_SET=0
+if [[ -n "${LAMMPS_ARGS+x}" ]]; then
+  LAMMPS_ARGS_OVERRIDE_SET=1
 fi
 
 PARAMS="${PARAMS:-params.single_restart_loop.json}"
@@ -23,7 +21,7 @@ CLEAN_EXISTING="${CLEAN_EXISTING:-0}"
 OVERWRITE_OUTPUTS="${OVERWRITE_OUTPUTS:-0}"
 REPLACE_EXISTING="${REPLACE_EXISTING:-0}"
 WAIT_FOR_FINISH="${WAIT_FOR_FINISH:-0}"
-SESSION_PREFIX="${SESSION_PREFIX:-single_restart_np${MPI_RANKS}omp${OMP_THREADS}}"
+SESSION_PREFIX_OVERRIDE="${SESSION_PREFIX-}"
 
 TARGETS="${TARGETS:-}"
 SEEDS="${SEEDS:-}"
@@ -36,18 +34,8 @@ if [[ "$WORKSPACE" =~ [[:space:]] ]]; then
   exit 2
 fi
 
-if [[ "$LAMMPS_BIN" =~ [[:space:]] ]]; then
-  echo "LAMMPS_BIN contains whitespace: $LAMMPS_BIN" >&2
-  exit 2
-fi
-
 if ! command -v tmux >/dev/null 2>&1; then
   echo "Cannot find tmux. Install tmux or load the server module first." >&2
-  exit 2
-fi
-
-if (( MPI_RANKS <= 0 || OMP_THREADS <= 0 )); then
-  echo "MPI_RANKS and OMP_THREADS must be positive." >&2
   exit 2
 fi
 
@@ -60,37 +48,11 @@ if [[ ! -f "$PARAMS" ]]; then
   exit 2
 fi
 
-if [[ ! -x "$LAMMPS_BIN" ]]; then
-  echo "LAMMPS_BIN is not executable: $LAMMPS_BIN" >&2
-  exit 2
-fi
-
-LAMMPS_HELP="$("$LAMMPS_BIN" -h 2>&1 || true)"
-REQUIRED_PACKAGES=(MOLECULE ASPHERE RIGID)
-if (( OMP_THREADS > 1 )) || [[ " $LAMMPS_ARGS " == *" omp "* ]]; then
-  REQUIRED_PACKAGES+=(OPENMP)
-fi
-MISSING_PACKAGES=()
-for package in "${REQUIRED_PACKAGES[@]}"; do
-  if ! grep -Eq "(^|[[:space:]])${package}($|[[:space:]])" <<< "$LAMMPS_HELP"; then
-    MISSING_PACKAGES+=("$package")
-  fi
-done
-if (( ${#MISSING_PACKAGES[@]} > 0 )); then
-  echo "LAMMPS binary is missing required package(s): ${MISSING_PACKAGES[*]}" >&2
-  echo "This restart/input needs MOLECULE, ASPHERE, RIGID, and OPENMP when omp_threads > 1." >&2
-  exit 2
-fi
-
-TMUX_DIR="${TMUX_DIR:-$WORKSPACE/.single_restart_tmux_np${MPI_RANKS}omp${OMP_THREADS}}"
-RUNNER_DIR="$TMUX_DIR/runners"
-LOG_DIR="$TMUX_DIR/logs"
-STATUS_DIR="$TMUX_DIR/status"
-mkdir -p "$RUNNER_DIR" "$LOG_DIR" "$STATUS_DIR"
-
-EFFECTIVE_PARAMS="$TMUX_DIR/effective_params.json"
-export MPI_RANKS OMP_THREADS MPIEXEC LAMMPS_BIN LAMMPS_ARGS TARGETS SEEDS LOOPS HOT_T OVERWRITE_OUTPUTS
-python3 - "$PARAMS" "$EFFECTIVE_PARAMS" <<'PY'
+PREP_EFFECTIVE_PARAMS="$WORKSPACE/.single_restart_effective_params.json"
+PREP_ENV="$WORKSPACE/.single_restart_effective_env.sh"
+export MPI_RANKS_OVERRIDE OMP_THREADS_OVERRIDE MPIEXEC_OVERRIDE LAMMPS_BIN_OVERRIDE LAMMPS_ARGS_OVERRIDE LAMMPS_ARGS_OVERRIDE_SET
+export TARGETS SEEDS LOOPS HOT_T OVERWRITE_OUTPUTS
+python3 - "$PARAMS" "$PREP_EFFECTIVE_PARAMS" "$PREP_ENV" <<'PY'
 import json
 import os
 import shlex
@@ -98,7 +60,8 @@ import sys
 from pathlib import Path
 
 source = Path(sys.argv[1])
-dest = Path(sys.argv[2])
+params_dest = Path(sys.argv[2])
+env_dest = Path(sys.argv[3])
 data = json.loads(source.read_text(encoding="utf-8"))
 if not isinstance(data, dict):
     raise SystemExit(f"{source} must contain a JSON object")
@@ -124,17 +87,116 @@ elif "seeds" in simulation:
 if os.environ.get("HOT_T"):
     simulation["hot_T"] = float(os.environ["HOT_T"])
 
+def override_or_config(env_name: str, key: str, default: object) -> object:
+    override = os.environ.get(env_name, "")
+    if override != "":
+        return override
+    return run.get(key, default)
+
 run["run_lammps"] = False
-run["mpi_ranks"] = int(os.environ["MPI_RANKS"])
-run["omp_threads"] = int(os.environ["OMP_THREADS"])
-run["mpiexec"] = os.environ["MPIEXEC"]
-run["lammps_bin"] = os.environ["LAMMPS_BIN"]
-run["lammps_args"] = shlex.split(os.environ.get("LAMMPS_ARGS", ""))
+run["mpi_ranks"] = int(override_or_config("MPI_RANKS_OVERRIDE", "mpi_ranks", 4))
+run["omp_threads"] = int(override_or_config("OMP_THREADS_OVERRIDE", "omp_threads", 9))
+run["mpiexec"] = str(override_or_config("MPIEXEC_OVERRIDE", "mpiexec", "mpiexec"))
+run["lammps_bin"] = str(
+    override_or_config("LAMMPS_BIN_OVERRIDE", "lammps_bin", "/home/star/Research/software/lammps-22Jul2025/build/lmp")
+)
+
+if os.environ.get("LAMMPS_ARGS_OVERRIDE_SET") == "1":
+    lammps_args = shlex.split(os.environ.get("LAMMPS_ARGS_OVERRIDE", ""))
+elif "lammps_args" in run:
+    raw_args = run["lammps_args"]
+    if isinstance(raw_args, str):
+        lammps_args = shlex.split(raw_args)
+    elif isinstance(raw_args, list):
+        lammps_args = [str(arg) for arg in raw_args]
+    else:
+        raise SystemExit("run.lammps_args must be a string or JSON list")
+elif run["omp_threads"] > 1:
+    lammps_args = ["-sf", "omp", "-pk", "omp", str(run["omp_threads"])]
+else:
+    lammps_args = []
+run["lammps_args"] = lammps_args
+
 if os.environ.get("OVERWRITE_OUTPUTS") == "1":
     output["overwrite"] = True
 
-dest.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+params_dest.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+lammps_args_text = " ".join(shlex.quote(arg) for arg in lammps_args)
+env_lines = [
+    f"MPI_RANKS={shlex.quote(str(run['mpi_ranks']))}",
+    f"OMP_THREADS={shlex.quote(str(run['omp_threads']))}",
+    f"MPIEXEC={shlex.quote(str(run['mpiexec']))}",
+    f"LAMMPS_BIN={shlex.quote(str(run['lammps_bin']))}",
+    f"LAMMPS_ARGS={shlex.quote(lammps_args_text)}",
+]
+env_dest.write_text("\n".join(env_lines) + "\n", encoding="utf-8")
 PY
+
+# shellcheck disable=SC1090
+source "$PREP_ENV"
+
+if [[ -n "$SESSION_PREFIX_OVERRIDE" ]]; then
+  SESSION_PREFIX="$SESSION_PREFIX_OVERRIDE"
+else
+  SESSION_PREFIX="single_restart_np${MPI_RANKS}omp${OMP_THREADS}"
+fi
+
+if (( MPI_RANKS <= 0 || OMP_THREADS <= 0 )); then
+  echo "MPI_RANKS and OMP_THREADS must be positive." >&2
+  exit 2
+fi
+
+if [[ "$LAMMPS_BIN" =~ [[:space:]] ]]; then
+  echo "LAMMPS_BIN contains whitespace: $LAMMPS_BIN" >&2
+  exit 2
+fi
+
+if [[ ! -x "$LAMMPS_BIN" ]]; then
+  echo "LAMMPS_BIN is not executable: $LAMMPS_BIN" >&2
+  exit 2
+fi
+
+LAMMPS_HELP="$("$LAMMPS_BIN" -h 2>&1 || true)"
+
+lammps_has_package() {
+  tr -cs '[:alnum:]_' '\n' <<< "$LAMMPS_HELP" | grep -Fxq "$1"
+}
+
+lammps_args_request_openmp_package() {
+  [[ " $LAMMPS_ARGS " == *" -sf omp "* ]] || [[ " $LAMMPS_ARGS " == *" -suffix omp "* ]] || [[ " $LAMMPS_ARGS " == *" -pk omp "* ]] || [[ " $LAMMPS_ARGS " == *" -package omp "* ]]
+}
+
+REQUIRED_PACKAGES=(MOLECULE ASPHERE RIGID)
+if lammps_args_request_openmp_package; then
+  REQUIRED_PACKAGES+=(OPENMP)
+fi
+MISSING_PACKAGES=()
+for package in "${REQUIRED_PACKAGES[@]}"; do
+  if ! lammps_has_package "$package"; then
+    MISSING_PACKAGES+=("$package")
+  fi
+done
+if (( ${#MISSING_PACKAGES[@]} > 0 )); then
+  echo "LAMMPS binary is missing required package(s): ${MISSING_PACKAGES[*]}" >&2
+  echo "This restart/input needs MOLECULE, ASPHERE, and RIGID." >&2
+  echo "OPENMP is additionally required only when LAMMPS_ARGS requests -sf/-pk omp." >&2
+  echo "LAMMPS_BIN=$LAMMPS_BIN" >&2
+  echo "LAMMPS_ARGS=$LAMMPS_ARGS" >&2
+  if [[ " ${MISSING_PACKAGES[*]} " == *" OPENMP "* ]]; then
+    echo "If this binary lacks the OPENMP package, rebuild with PKG_OPENMP enabled or run without /omp styles by setting LAMMPS_ARGS=''." >&2
+  fi
+  exit 2
+fi
+
+TMUX_DIR="${TMUX_DIR:-$WORKSPACE/.single_restart_tmux_np${MPI_RANKS}omp${OMP_THREADS}}"
+RUNNER_DIR="$TMUX_DIR/runners"
+LOG_DIR="$TMUX_DIR/logs"
+STATUS_DIR="$TMUX_DIR/status"
+mkdir -p "$RUNNER_DIR" "$LOG_DIR" "$STATUS_DIR"
+
+EFFECTIVE_PARAMS="$TMUX_DIR/effective_params.json"
+mv "$PREP_EFFECTIVE_PARAMS" "$EFFECTIVE_PARAMS"
+rm -f "$PREP_ENV"
 
 if [[ "$CLEAN_EXISTING" == "1" ]]; then
   CLEAN_LIST="$TMUX_DIR/cleanup_targets.txt"

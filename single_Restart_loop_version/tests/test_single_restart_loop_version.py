@@ -201,6 +201,138 @@ class SingleRestartLoopVersionTests(unittest.TestCase):
             manifest = json.loads((root / "single_restart_suite_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual([case["target_T"] for case in manifest["cases"]], [1.2, 1.1])
 
+    def test_tmux_launcher_allows_threads_without_openmp_package_when_omp_args_disabled(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            fake_tmux = bin_dir / "tmux"
+            fake_tmux.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            fake_tmux.chmod(0o755)
+            fake_lmp = bin_dir / "lmp"
+            fake_lmp.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"${1:-}\" == \"-h\" ]]; then\n"
+                "  echo 'Installed packages: MOLECULE ASPHERE RIGID'\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_lmp.chmod(0o755)
+            (root / "Restart.manual").write_bytes(b"restart")
+            params = root / "params.single.json"
+            params.write_text(
+                json.dumps(
+                    {
+                        "workspace": "cwd",
+                        "input": {"restart_file": "Restart.manual"},
+                        "output": {"temperature_dir_template": "Tstar_{T:.2f}", "overwrite": False},
+                        "simulation": {"target_T_list": [1.20], "hot_T": 1.70, "loops": 1, "seeds": [111111]},
+                        "run": {"run_lammps": False, "mpi_ranks": 1, "omp_threads": 1, "lammps_bin": str(fake_lmp)},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            script = Path(single.__file__).resolve().with_name("server_tmux_single_restart.sh")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
+                    "PARAMS": str(params),
+                    "MPI_RANKS": "4",
+                    "OMP_THREADS": "14",
+                    "LAMMPS_BIN": str(fake_lmp),
+                    "LAMMPS_ARGS": "",
+                    "CPU_TOTAL": "512",
+                    "DRY_RUN_ONLY": "1",
+                    "CLEAN_EXISTING": "1",
+                }
+            )
+            result = subprocess.run(
+                ["bash", str(script)],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            self.assertIn("Per temp      : np=4, omp=14, CPUs=56", result.stdout)
+            command = (root / "Tstar_1.20" / "loop1_111111" / "command.txt").read_text(encoding="utf-8")
+            self.assertIn("OMP_NUM_THREADS=14 mpiexec -np 4", command)
+            self.assertNotIn("-sf omp", command)
+            self.assertNotIn("-pk omp", command)
+
+    def test_tmux_launcher_uses_params_cpu_settings_without_env_override(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            fake_tmux = bin_dir / "tmux"
+            fake_tmux.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            fake_tmux.chmod(0o755)
+            fake_lmp = bin_dir / "lmp"
+            fake_lmp.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"${1:-}\" == \"-h\" ]]; then\n"
+                "  echo 'Installed packages: MOLECULE ASPHERE RIGID OPENMP'\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_lmp.chmod(0o755)
+            (root / "Restart.manual").write_bytes(b"restart")
+            params = root / "params.single.json"
+            params.write_text(
+                json.dumps(
+                    {
+                        "workspace": "cwd",
+                        "input": {"restart_file": "Restart.manual"},
+                        "output": {"temperature_dir_template": "Tstar_{T:.2f}", "overwrite": False},
+                        "simulation": {"target_T_list": [1.20], "hot_T": 1.70, "loops": 1, "seeds": [111111]},
+                        "run": {
+                            "run_lammps": False,
+                            "mpi_ranks": 4,
+                            "omp_threads": 14,
+                            "mpiexec": "mpiexec",
+                            "lammps_bin": str(fake_lmp),
+                            "lammps_args": ["-sf", "omp", "-pk", "omp", "14"],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            script = Path(single.__file__).resolve().with_name("server_tmux_single_restart.sh")
+            env = os.environ.copy()
+            env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+            env["PARAMS"] = str(params)
+            env["CPU_TOTAL"] = "512"
+            env["DRY_RUN_ONLY"] = "1"
+            env["CLEAN_EXISTING"] = "1"
+            for key in ("MPI_RANKS", "OMP_THREADS", "MPIEXEC", "LAMMPS_BIN", "LAMMPS_ARGS"):
+                env.pop(key, None)
+
+            result = subprocess.run(
+                ["bash", str(script)],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            self.assertIn("Per temp      : np=4, omp=14, CPUs=56", result.stdout)
+            self.assertIn(".single_restart_tmux_np4omp14/effective_params.json", result.stdout)
+            command = (root / "Tstar_1.20" / "loop1_111111" / "command.txt").read_text(encoding="utf-8")
+            self.assertIn("OMP_NUM_THREADS=14 mpiexec -np 4", command)
+            self.assertIn("-sf omp -pk omp 14", command)
+
 
 if __name__ == "__main__":
     unittest.main()

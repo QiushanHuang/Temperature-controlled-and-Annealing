@@ -84,3 +84,17 @@ Set `DRY_RUN_ONLY=1` to generate and inspect the plan without launching tmux.
 - restart file: `Restart.Cooling_heating_L7_from_RE3000`
 - target temperatures: `1.20 1.10 1.00 0.90 0.80 0.70 0.60 0.50 0.40`
 - CPU layout: `np4omp9`
+
+`params.RE3000_np4omp14.json` is the same RE3000 template with CPU layout
+`np4omp14`. With 9 target temperatures this launches 9 tmux sessions and requests
+`9 * 4 * 14 = 504` CPU threads.
+
+If the LAMMPS binary does not include the `OPENMP` package, commands with
+`-sf omp -pk omp N` cannot run. To diagnose:
+
+```bash
+/home/star/Research/software/lammps-22Jul2025/build/lmp -h | tr -cs '[:alnum:]_' '\n' | grep -E '^(MOLECULE|ASPHERE|RIGID|OPENMP)$'
+```
+
+If `OPENMP` is absent, rebuild LAMMPS with `PKG_OPENMP` enabled or run without
+`/omp` styles by setting `LAMMPS_ARGS=""`.
